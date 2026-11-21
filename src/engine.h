@@ -6,7 +6,7 @@
 //   VCO 1 + VCO 2 + noise (white or pink) --> mixer (clips when hot)
 //     --> 4-pole ladder (LP or HP; VCF EG and noise move the cutoff) --> VCA (its EG) --> Volume --> out
 //
-// Every step of the 8-step sequencer triggers all three envelopes. The clock is the host's: a step starts on each
+// Every step of the 8-step sequencer (Length plays fewer) triggers all three envelopes. The clock is the host's: a step starts on each
 // multiple of Clock Div from the song's top, while the host plays.
 //
 // Cost: no allocation, no locks, no branches on the sound's path beyond the oscillators' edges; the knobs are
@@ -330,7 +330,7 @@ public:
     {
         if (id == ParamId::advance)
         {
-            stepIndex = (stepIndex + 1) & 7;
+            stepIndex = nextStep (stepIndex);
             heldPitch = knob[ParamId::pitch1 + stepIndex]; // the pitch CV follows the step, sounding or not
             dirty = true;
         }
@@ -374,7 +374,7 @@ public:
             {
                 if (regridWanted)
                     regrid();
-                const double next = (double) (lastStep + 1) * stepBeats();
+                const double next = clockBeat (lastStep + 1);
                 const double ahead = (next - position) / perFrame;
                 if (ahead <= clockSlack)
                 {
@@ -405,15 +405,37 @@ public:
 private:
     // --- Sequencer ---
     double stepBeats() const { return clockDivBeats[(int) knob[ParamId::clockDiv]]; }
+    int length() const { return std::max (1, (int) knob[ParamId::length]); }
+    // The step after `s`: Length steps, then step 1 again.
+    int nextStep (int s) const { return s + 1 >= length() ? 0 : s + 1; }
+
+    // Swing: the second clock of each pair comes later, at Swing's share of the pair (50 %: straight, 66 %: a
+    // triplet shuffle, 75 %: a dotted one), as an MPC's swing does. At 50 % the clocks are k grids from the top, worked
+    // out exactly as before Swing was added.
+    double clockBeat (int64_t k) const
+    {
+        const double grid = stepBeats(), swing = knob[ParamId::swing];
+        if (swing == 0.5 || (k & 1) == 0)
+            return (double) k * grid;
+        return (double) (k - 1) * grid + 2.0 * grid * swing;
+    }
+    // The last clock at or before `beats`.
+    int64_t clockAtOrBefore (double beats) const
+    {
+        const double grid = stepBeats();
+        const int64_t b = (int64_t) std::floor (beats / grid + 1.0e-9);
+        if ((b & 1) == 0 || knob[ParamId::swing] == 0.5f)
+            return b;
+        return beats / grid + 1.0e-9 < clockBeat (b) / grid ? b - 1 : b; // between the grid line and the late clock
+    }
 
     void relocate (double beats, double window)
     {
-        const double grid = stepBeats();
-        const double b = std::floor (beats / grid + 1.0e-9);
+        const int64_t b = clockAtOrBefore (beats);
         // Just past a step's start (less than a block: a loop's wrap inside the last block, a Play landing a hair
         // late): that step plays at once; further in, the next step is the first.
-        const double late = (beats - b * grid) / perFrame;
-        lastStep = (int64_t) b - (late < window ? 1 : 0);
+        const double late = (beats - clockBeat (b)) / perFrame;
+        lastStep = b - (late < window ? 1 : 0);
         position = beats;
         if (knob[ParamId::run] >= 0.5f) // stopped by Run, the sequence holds its step through the host's moves
             aligned = false;
@@ -423,17 +445,18 @@ private:
     // Clock Div changed: count steps on the new grid from here, without a burst of them.
     void regrid()
     {
-        lastStep = (int64_t) std::floor (position / stepBeats() + 1.0e-9);
+        lastStep = clockAtOrBefore (position);
         regridWanted = false;
     }
 
     // The step a clock lands on: after a Play or a jump, the song's place (so its top is step 1); else the next one.
     void advanceTo (int64_t clock)
     {
+        const int64_t n = length();
         if (! aligned)
-            stepIndex = (int) (((clock % 8) + 8) % 8), aligned = true;
+            stepIndex = (int) (((clock % n) + n) % n), aligned = true;
         else
-            stepIndex = (stepIndex + 1) & 7;
+            stepIndex = nextStep (stepIndex);
     }
 
     // All three envelopes, toward the step's velocity, with its pitch held from now (no glide into a step: it lands on

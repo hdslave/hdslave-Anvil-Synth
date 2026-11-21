@@ -4,8 +4,9 @@ An 8-step analog-style percussion synthesizer as a CLAP plug-in, built for the A
 (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`). It follows the front panel and normalled signal flow of the Moog DFAM and the
 Behringer Edge, without the patch bay, plus one new control: **VCO EG > FM 1-2 Amt**.
 
-Its sequencer is its own (8 steps of pitch and velocity), clocked by the host: steps fall on the host's beat grid
-while the host plays, stop when it stops, and start again from the song's place when it starts or jumps.
+Its sequencer is its own (8 steps of pitch and velocity, or fewer: Length), clocked by the host: steps fall on the
+host's beat grid, swung if you like, while the host plays, stop when it stops, and start again from the song's place
+when it starts or jumps.
 
 ## Signal flow
 
@@ -46,6 +47,8 @@ The panel's names, in the order Melodee's Edit page lists them (three to a page)
 | VCA Decay | VCA DECAY | DECAY | 10 ms – 10 s |
 | Volume | VOLUME | VOLUME | 0 – 100 % |
 | Clock Div | TEMPO (replaced) | SCALE | 1/2 … 1/64 of the host's beat, with triplets |
+| Length | — (patch cables) | — (patch cables) | 1 – 8 steps: the sequence plays steps 1 to Length, then step 1 again (on the panels, a cable from a step's trigger to Reset) |
+| Swing | — | — | 50 – 75 %: the second step of each pair comes late, at that share of the pair, as an MPC's swing does (66 %: a triplet shuffle) |
 | Run | RUN/STOP | PLAY/STOP | Stop / Run |
 | Trigger | TRIGGER | TRIGGER | plays the current step without moving |
 | Advance | ADVANCE | ADVANCE | moves one step without playing |
@@ -79,8 +82,9 @@ same samples as the demo's list.
 
 ## Clocking from the host
 
-- A step starts on every multiple of Clock Div counted from the song's top, while the host plays. Play from the top
-  starts on step 1, on its first frame; each later step lands on its frame.
+- A step starts on every multiple of Clock Div counted from the song's top, while the host plays (swung: every second
+  one later by Swing). Play from the top starts on step 1, on its first frame; each later step lands on its frame. A
+  Play or a jump places the sequence by the song's place: the clock's number from the top, counted round Length.
 - Stop stops the sequence (sounds ring out). Play again starts from where the song is.
 - A jump, or a loop going round, lines the sequence up with the song's place again. A wrap that falls inside a block
   still plays that step, at the start of the next block (at most a block late: 2.7 ms at 128 frames).
@@ -110,9 +114,9 @@ Instructions a 128-frame block takes, from `tools/bench.sh` (callgrind):
 
 | Case | Instructions | Share of one A55 core at 1 instruction a cycle |
 |---|---|---|
-| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 83,000 | 1.7 % |
+| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 82,000 | 1.7 % |
 | A short percussive pattern | about 77,000 | 1.6 % |
-| Stopped | under 1,000 | 0.02 % |
+| Stopped | under 600 | 0.01 % |
 
 While the VCA is closed between hits the oscillators and filter are skipped. The voice's two samples a frame, and the
 synced oscillator's step, are compiled into the frame's loop rather than called (a fifth fewer instructions than
@@ -132,11 +136,12 @@ tools/bench.sh      # instruction counts (Melodee's melodee-profiler image)
 The tests load the plug-in through the CLAP API and check: description and ports; every parameter's range, text and
 default; state save and load; the presets as preset discovery lists them and preset-load loads them; step timing to the frame at 44.1, 48 and 96 kHz and two tempos; stop, restart, jumps,
 a loop wrapping inside a block, a host without a song position; the same output whatever the block size (1, 37,
-128, 4096 frames); Trigger, Advance, Run and MIDI notes; velocity and tails; VCO pitch, step pitch on each Seq Pitch
+128, 4096 frames); Trigger, Advance, Run and MIDI notes; Length (a cycle of 3, Advance wrapping in it) and Swing (66 and
+75 %, and a jump between a step's grid line and its late clock); velocity and tails; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
 
-`tests/fingerprint.cpp` then renders 37 fixed scenarios (each preset, the bench's patches, 24 random patches with the
-buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps) and hashes every output sample's bits
+`tests/fingerprint.cpp` then renders 46 fixed scenarios (each preset, the bench's patches, 24 random patches with the
+buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps, Length and Swing) and hashes every output sample's bits
 against `tests/fingerprint.txt`: work meant to keep the sound, such as a speed-up, must leave every hash as it is. A
 change meant to change the sound updates them with `make fingerprint-update` (run inside the build image). The
 hashes hold for Melodee's build image and these compiler flags.

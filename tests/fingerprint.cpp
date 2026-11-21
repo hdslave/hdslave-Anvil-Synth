@@ -160,8 +160,11 @@ uint64_t render (const Scenario& s)
     return hash;
 }
 
-// Random settings, every one in its range (the buttons left out), from a fixed seed.
-std::vector<std::pair<std::string, double>> randomValues (uint32_t seed, const std::vector<std::string>& skip)
+// Random settings, every one in its range (the buttons left out), from a fixed seed. They are drawn for the
+// parameters `order` names, in its order: the parameters the plug-in had when the scenario was made, so a parameter
+// added since (or moved in the table) stays at its default there and the old hashes still hold.
+std::vector<std::pair<std::string, double>> randomValues (uint32_t seed, const std::vector<std::string>& skip,
+                                                          const std::vector<std::string>& order)
 {
     std::vector<std::pair<std::string, double>> out;
     std::mt19937 random (seed);
@@ -169,10 +172,21 @@ std::vector<std::pair<std::string, double>> randomValues (uint32_t seed, const s
     const clap_plugin* plugin = factory->create_plugin (factory, &host, d->id);
     plugin->init (plugin);
     const auto* params = static_cast<const clap_plugin_params*> (plugin->get_extension (plugin, CLAP_EXT_PARAMS));
+    std::map<std::string, clap_param_info> byName;
     for (uint32_t i = 0; i < params->count (plugin); ++i)
     {
         clap_param_info info {};
         params->get_info (plugin, i, &info);
+        byName[info.name] = info;
+    }
+    for (const auto& name : order)
+    {
+        if (byName.count (name) == 0)
+        {
+            std::printf ("no parameter %s\n", name.c_str());
+            continue;
+        }
+        const clap_param_info info = byName[name];
         std::uniform_real_distribution<double> u (info.min_value, info.max_value);
         double v = u (random);
         if (info.flags & CLAP_PARAM_IS_STEPPED)

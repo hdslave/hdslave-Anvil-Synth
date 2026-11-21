@@ -3,6 +3,13 @@
 
 namespace
 {
+// The parameters of Anvil 0.2, in its table's order: the random scenarios draw for these.
+const std::vector<std::string> order02 { "VCO Decay", "1-2 FM Amt", "VCO EG > FM 1-2 Amt", "VCO 1 Freq", "VCO 1 EG Amt", "VCO 1 Wave",
+    "VCO 2 Freq", "VCO 2 EG Amt", "VCO 2 Wave", "Seq Pitch Mod", "Hard Sync", "Noise Color", "VCO 1 Level", "Noise Level", "VCO 2 Level",
+    "Cutoff", "Resonance", "VCF Mode", "VCF Decay", "VCF EG Amt", "Noise/VCF Mod", "VCA EG", "VCA Decay", "Volume", "Clock Div", "Run",
+    "Trigger", "Advance", "Pitch 1", "Pitch 2", "Pitch 3", "Pitch 4", "Pitch 5", "Pitch 6", "Pitch 7", "Pitch 8", "Velocity 1",
+    "Velocity 2", "Velocity 3", "Velocity 4", "Velocity 5", "Velocity 6", "Velocity 7", "Velocity 8" };
+
 std::vector<Scenario> scenarios()
 {
     std::vector<Scenario> list;
@@ -28,7 +35,7 @@ std::vector<Scenario> scenarios()
     {
         Scenario s;
         s.name = "random-" + std::to_string (r);
-        s.values = randomValues (1000 + r, { "Trigger", "Advance" });
+        s.values = randomValues (1000 + r, { "Trigger", "Advance" }, order02);
         s.seconds = 3.0, s.bpm = 150.0;
         s.events = { { 24000, Event::param, "Trigger", 1.0 }, { 48011, Event::param, "Advance", 1.0 }, { 62403, Event::noteOn, "", 60 },
                      { 72000, Event::noteOff, "", 60 }, { 96005, Event::param, "Run", 1.0 }, { 100007, Event::param, "Cutoff", 0.25 },
@@ -66,6 +73,23 @@ std::vector<Scenario> scenarios()
         return { true, 100.0 / 24000.0 + (f - 200000) * bpm / 60.0 / rate };
     };
     list.push_back (moves);
+    // 0.3: Length and Swing, from the top and after a jump, with Advance and a Length change while it plays.
+    for (int n : { 5, 3, 1 })
+        for (double swing : { 0.5, 0.62, 0.75 })
+        {
+            Scenario s;
+            s.name = "length-" + std::to_string (n) + "-swing-" + std::to_string ((int) std::lround (swing * 100));
+            s.preset = "fm-perc";
+            s.values = { { "Length", (double) n }, { "Swing", swing } };
+            s.seconds = 5.0;
+            s.events = { { 60000, Event::param, "Advance", 1.0 }, { 150001, Event::param, "Length", 7.0 } };
+            s.transport = [] (uint64_t at, double bpm, double rate) -> std::pair<bool, double> {
+                const double f = (double) at;
+                if (at < 120000) return { true, f * bpm / 60.0 / rate };
+                return { true, 5.1 + (f - 120000) * bpm / 60.0 / rate };
+            };
+            list.push_back (s);
+        }
     return list;
 }
 } // namespace

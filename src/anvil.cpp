@@ -34,6 +34,7 @@ struct Plugin
     // Every parameter's value. The audio thread writes it from events; the main thread reads it, and writes it when
     // a state is loaded. The engine notices those at the next block.
     std::atomic<float> values[paramCount];
+    std::atomic<bool> mainChanged { false }; // the main thread wrote values (a state, a preset, a flush): look at them
     float applied[paramCount] {};
     Engine engine;
     bool active = false;
@@ -163,7 +164,10 @@ void paramsFlush (const clap_plugin* plugin, const clap_input_events* in, const 
             const auto* v = reinterpret_cast<const clap_event_param_value*> (e);
             const int index = paramIndex (v->param_id);
             if (index >= 0 && paramTable[index].kind != Kind::button)
+            {
                 p.values[index].store (clampParam (paramTable[index], (float) v->value), std::memory_order_relaxed);
+                p.mainChanged.store (true, std::memory_order_release);
+            }
         }
     }
     (void) out;
@@ -209,6 +213,7 @@ void setAll (Plugin& p, const float* values)
 {
     for (uint32_t i = 0; i < paramCount; ++i)
         p.values[i].store (values[i], std::memory_order_relaxed);
+    p.mainChanged.store (true, std::memory_order_release);
     if (! p.active) // not processing: the engine takes them now; otherwise at the next block
         for (uint32_t i = 0; i < paramCount; ++i)
             p.applied[i] = values[i], p.engine.set (paramTable[i].id, values[i]);
@@ -371,13 +376,14 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     float* left = process->audio_outputs[0].data32[0];
     float* right = process->audio_outputs[0].channel_count > 1 ? process->audio_outputs[0].data32[1] : nullptr;
 
-    // Values the main thread changed (a state loaded while playing).
-    for (uint32_t i = 0; i < paramCount; ++i)
-    {
-        const float v = p.values[i].load (std::memory_order_relaxed);
-        if (v != p.applied[i] && paramTable[i].kind != Kind::button)
-            p.applied[i] = v, p.engine.set (paramTable[i].id, v);
-    }
+    // Values the main thread changed (a state loaded while playing): looked through only when it wrote some.
+    if (p.mainChanged.exchange (false, std::memory_order_acquire))
+        for (uint32_t i = 0; i < paramCount; ++i)
+        {
+            const float v = p.values[i].load (std::memory_order_relaxed);
+            if (v != p.applied[i] && paramTable[i].kind != Kind::button)
+                p.applied[i] = v, p.engine.set (paramTable[i].id, v);
+        }
 
     // Events at the block's first frame come first, the transport after them: a setting the host sends with Play is
     // in place for what Play does (the sequencer's reset at Play, its first step).

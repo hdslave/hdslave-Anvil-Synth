@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.2.1"
+#define ANVIL_VERSION "0.3.0"
 #endif
 
 namespace anvil
@@ -25,13 +25,14 @@ enum : uint32_t
     pitch1, pitch2, pitch3, pitch4, pitch5, pitch6, pitch7, pitch8,
     velocity1, velocity2, velocity3, velocity4, velocity5, velocity6, velocity7, velocity8,
     noiseColor, // added after the rest: ids never move
+    length, swing, // 0.3.0
     count
 };
 }
 
-enum class Kind : uint8_t { continuous, choice, button };
+enum class Kind : uint8_t { continuous, integer, choice, button };
 // How a value reads: what the knob does, for its text.
-enum class Unit : uint8_t { vcoHz, cutoffHz, decay, percent, bipolar, octaves, resonance, gain, semitones, choice, button };
+enum class Unit : uint8_t { vcoHz, cutoffHz, decay, percent, bipolar, octaves, resonance, gain, semitones, plainInt, choice, button };
 
 struct Param
 {
@@ -92,6 +93,7 @@ static_assert (sizeof (clockDivBeats) / sizeof (clockDivBeats[0]) == sizeof (clo
 
 using P = Param;
 #define CONT(id, name, module, lo, hi, def, unit) P { ParamId::id, name, module, lo, hi, def, Kind::continuous, Unit::unit, nullptr }
+#define INT(id, name, module, lo, hi, def, unit) P { ParamId::id, name, module, lo, hi, def, Kind::integer, Unit::unit, nullptr }
 #define CHOICE(id, name, module, list, def) P { ParamId::id, name, module, 0.0f, (float) (sizeof (list) / sizeof (list[0]) - 1), def, Kind::choice, Unit::choice, list }
 #define BUTTON(id, name, module) P { ParamId::id, name, module, 0.0f, 1.0f, 0.0f, Kind::button, Unit::button, nullptr }
 
@@ -123,6 +125,8 @@ inline constexpr Param paramTable[] = {
     CONT (vcaDecay, "VCA Decay", "VCA", 0.0f, 1.0f, 0.4f, decay),
     CONT (volume, "Volume", "VCA", 0.0f, 1.0f, 0.7f, gain),
     CHOICE (clockDiv, "Clock Div", "Sequencer", clockDivChoices, 3.0f),
+    INT (length, "Length", "Sequencer", 1.0f, 8.0f, 8.0f, plainInt),
+    CONT (swing, "Swing", "Sequencer", 0.5f, 0.75f, 0.5f, percent),
     CHOICE (run, "Run", "Sequencer", runChoices, 1.0f),
     BUTTON (trigger, "Trigger", "Sequencer"),
     BUTTON (advance, "Advance", "Sequencer"),
@@ -144,6 +148,7 @@ inline constexpr Param paramTable[] = {
     CONT (velocity8, "Velocity 8", "Sequencer/Velocity", 0.0f, 1.0f, 0.6f, percent),
 };
 #undef CONT
+#undef INT
 #undef CHOICE
 #undef BUTTON
 
@@ -194,6 +199,7 @@ inline void formatParam (const Param& p, float v, char* text, uint32_t size)
         case Unit::bipolar: std::snprintf (text, size, "%+.0f %%", v * 100.0f); break;
         case Unit::octaves: std::snprintf (text, size, "%+.2f oct", v); break;
         case Unit::semitones: std::snprintf (text, size, "%+.1f st", v * seqPitchOctaves * 12.0f); break;
+        case Unit::plainInt: std::snprintf (text, size, "%d", (int) v); break;
         case Unit::choice: std::snprintf (text, size, "%s", p.choices[(int) v]); break;
         case Unit::button: std::snprintf (text, size, "%s", v >= 0.5f ? "Pressed" : "Press"); break;
     }

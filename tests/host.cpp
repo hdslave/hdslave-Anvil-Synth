@@ -267,7 +267,7 @@ void testParameters()
 {
     Instance a;
     const uint32_t count = a.params->count (a.plugin);
-    CHECK (count == 44);
+    CHECK (count == 46);
     std::map<clap_id, int> seen;
     for (uint32_t i = 0; i < count; ++i)
     {
@@ -288,7 +288,7 @@ void testParameters()
                               "VCO 2 EG Amt", "VCO 2 Wave", "1-2 FM Amt", "VCO EG > FM 1-2 Amt", "VCO 1 Level", "Noise Level",
                               "VCO 2 Level", "Cutoff", "Resonance", "VCF Mode", "VCF Decay", "VCF EG Amt", "Noise/VCF Mod", "VCA EG",
                               "VCA Decay", "Volume", "Clock Div", "Run", "Trigger", "Advance", "Pitch 1", "Pitch 8", "Velocity 1", "Velocity 8",
-                              "Noise Color" })
+                              "Noise Color", "Length", "Swing" })
         CHECK (a.ids.count (name) == 1);
 }
 
@@ -617,6 +617,92 @@ void testButtonsAndNotes()
     CHECK (hits.size() == 4 && std::labs ((hits[1] - 12000) - (hits[0] - 3840)) <= 1 && std::labs ((hits[3] - 36000) - (hits[0] - 3840)) <= 1);
 }
 
+void testLengthAndSwing()
+{
+    std::vector<float> l, r;
+    auto peaks = [&] (long stepFrames, int steps) {
+        std::vector<float> out;
+        for (int k = 0; k < steps; ++k)
+        {
+            float m = 0.0f;
+            for (long i = k * stepFrames; i < (k + 1) * stepFrames; ++i)
+                m = std::max (m, std::fabs (l[(size_t) i]));
+            out.push_back (m);
+        }
+        return out;
+    };
+    // Length 3: the steps' velocities go 1, 2, 3, 1, 2, 3 ...; the other steps (their velocity 0.7) never play.
+    {
+        Instance a;
+        auto patch = clickPatch (a);
+        patch.push_back ({ "Length", 3 });
+        for (int i = 1; i <= 8; ++i)
+            patch.push_back ({ "Velocity " + std::to_string (i), i == 1 ? 1.0 : i == 2 ? 0.45 : i == 3 ? 0.2 : 0.7 });
+        a.setup (patch);
+        a.render (48000 * 4, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+        const auto p = peaks (12000, 16);
+        if (std::getenv ("ANVIL_DEBUG")) { std::printf ("debug length peaks:"); for (float v : p) std::printf (" %.4f", v); std::printf ("\n"); }
+        bool cycles = true;
+        for (int k = 4; k < 16; ++k) // from the second hit on (the first starts with the filter empty)
+            cycles &= std::fabs (p[(size_t) k] - p[(size_t) (k - 3)]) < 1e-3f * p[(size_t) (k - 3)] + 1e-6f;
+        CHECK (cycles && p[3] > p[4] * 1.5f && p[4] > p[5] * 1.5f);
+    }
+    // Length 3 and Advance: Advance moves on within the three steps.
+    {
+        Instance a;
+        auto patch = clickPatch (a);
+        patch.push_back ({ "Length", 3 });
+        patch.push_back ({ "Run", 0.0 });
+        for (int i = 1; i <= 8; ++i)
+            patch.push_back ({ "Velocity " + std::to_string (i), i == 1 ? 1.0 : i == 2 ? 0.45 : i == 3 ? 0.2 : 0.7 });
+        a.setup (patch);
+        // Stopped: Trigger plays step 1 (once to warm the filter, once to measure); three Advances later it is
+        // step 1 again, and one more Advance step 2.
+        a.render (48000 * 3, 128, l, r, [] (uint64_t) { return Transport { false, 120.0, 0.0 }; }, [&] (uint64_t at, uint32_t, Events& e) {
+            if (at == 0 || at == 128 * 100 || at == 128 * 300 || at == 128 * 500) a.set (e, "Trigger", 1.0);
+            if (at == 128 * 200) { e.param (0, a.id ("Advance"), 1.0); e.param (1, a.id ("Advance"), 1.0); e.param (2, a.id ("Advance"), 1.0); }
+            if (at == 128 * 400) a.set (e, "Advance", 1.0);
+        });
+        auto peakAt = [&] (size_t from) { float m = 0.0f; for (size_t i = from; i < from + 6000; ++i) m = std::max (m, std::fabs (l[i])); return m; };
+        const float first = peakAt (12800), again = peakAt (38400), second = peakAt (64000);
+        if (std::getenv ("ANVIL_DEBUG")) std::printf ("debug advance: %.4f %.4f %.4f\n", first, again, second);
+        CHECK (first > 0.01f && std::fabs (first - again) < 0.02f * first && second < first * 0.7f);
+    }
+    // Swing: the second step of each pair comes late, at the swing's share of the pair (eighths at 120 BPM: a pair is
+    // 24,000 frames).
+    for (double swing : { 0.66, 0.75 })
+    {
+        Instance a;
+        auto patch = clickPatch (a);
+        patch.push_back ({ "Swing", swing });
+        a.setup (patch);
+        a.render (48000 * 4, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+        const auto hits = onsets (l);
+        if (std::getenv ("ANVIL_DEBUG")) { std::printf ("debug swing %.2f:", swing); for (long h : hits) std::printf (" %ld", h); std::printf ("\n"); }
+        CHECK (hits.size() == 16);
+        bool placed = hits.size() == 16;
+        auto at = [swing] (size_t i) { return (double) (i / 2) * 24000.0 + ((i & 1) ? 24000.0 * (float) swing : 0.0); };
+        for (size_t i = 3; placed && i < hits.size(); ++i) // from the third hit, the first after the filter warmed
+            placed = std::labs ((hits[i] - hits[2]) - std::lround (at (i) - at (2))) <= 2;
+        CHECK (placed);
+    }
+    // A jump past an odd step's grid line but before its late clock: that step still comes, at its swung place.
+    {
+        Instance a;
+        auto patch = clickPatch (a);
+        patch.push_back ({ "Swing", 0.75 });
+        a.setup (patch);
+        const uint64_t jump = 128 * 50;
+        a.render (48000, 128, l, r, [jump] (uint64_t at) {
+            if (at < jump) return playingFrom (0.0, 120.0, 48000.0, at);
+            return playingFrom (0.6, 120.0, 48000.0, at - jump); // the step's grid line is 0.5, its late clock 0.75
+        });
+        const auto hits = onsets (l);
+        const long expected = (long) jump + 3600; // 0.15 beat on
+        CHECK (std::find_if (hits.begin(), hits.end(), [&] (long h) { return h >= expected - 2 && h <= expected + 48; }) != hits.end());
+    }
+}
+
 void testVelocity()
 {
     // A soft step after a loud one with a long tail: the tail is not cut (it keeps falling smoothly), and a
@@ -818,6 +904,7 @@ int main (int argc, char** argv)
     testStopRestartJump();
     testBlockSizes();
     testButtonsAndNotes();
+    testLengthAndSwing();
     testVelocity();
     testPitchAndFm();
     testExtremes();
