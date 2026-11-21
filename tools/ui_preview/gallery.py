@@ -50,10 +50,20 @@ for i,(name,label) in enumerate(labels):
     sheet.paste(scale(page,2),(x,y))
     draw.text((x,y+486),label,font=font,fill='#d5b5ee')
 sheet.save(out/'contact-sheet-2x.png')
-loop = [composite(panel(Image.open(frames/f'step-{i}.ppm'))) for i in range(1,9)]
+loop = [composite(panel(Image.open(frames/f'motion-{i:02d}.ppm'))) for i in range(320)]
 strip = Image.new('RGB',(4*320,240))
-for i,frame in enumerate(loop[2:6]):
+for i,frame in enumerate(loop[130:150:5]):
     strip.paste(frame,(i*320,0))
 strip.save(out/'step-strip.png')
-motion = [scale(im,2) for im in loop]
-motion[0].save(out/'anvil-playing.gif',save_all=True,append_images=motion[1:],duration=125,loop=0,disposal=1,optimize=False)
+# A shared palette keeps stationary ink the same colour across every GIF frame.
+samples = loop[::10]
+swatches = Image.new('RGB', (320, 240*len(samples)))
+for i,frame in enumerate(samples):
+    swatches.paste(frame, (0,240*i))
+palette = swatches.quantize(colors=256)
+indexed = [im.quantize(palette=palette,dither=Image.Dither.NONE) for im in loop]
+motion = [scale(im,2) for im in indexed]
+motion[0].save(out/'anvil-playing.gif',save_all=True,append_images=motion[1:],duration=40,loop=0,disposal=1,optimize=False)
+
+header = [scale(im.crop((0,22,im.width,82)), 3) for im in indexed]
+header[0].save(out/'anvil-torus.gif',save_all=True,append_images=header[1:],duration=40,loop=0,disposal=1,optimize=False)

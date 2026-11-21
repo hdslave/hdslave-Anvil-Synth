@@ -1249,11 +1249,20 @@ void testScreen (const std::string& folder)
         return l;
     };
 
-    // First paint draws; the same picture again does not.
+    // The wire torus schedules its next pose even before the first audio block.
+    int before = paints;
     CHECK (paint (true));
+    CHECK (paints > before);
+    CHECK (! paint());
+    now += 800;
+    CHECK (paint());
+    now += 2600;
+    before = paints;
+    CHECK (paint());
+    CHECK (paints > before);
     CHECK (! paint());
     // A value moved from outside the page (a pot, automation, a preset) asks for a paint, which shows it.
-    int before = paints;
+    before = paints;
     a.setup ({ { "Cutoff", 0.3 } });
     CHECK (paints > before);
     CHECK (paint());
@@ -1287,7 +1296,7 @@ void testScreen (const std::string& folder)
     canvas.playing = true;
     const int paintsAsked = paints;
     CHECK (paint());
-    CHECK (paints > paintsAsked); // a hit fading: the paint asks for the next one itself
+    CHECK (paints > paintsAsked); // the page schedules its next pose
     shot ("steps");
     // VCO: Plus moves to the next group; K1-K3 follow the cursor; Push edits, the wheel changes 1-2 FM Amt, the
     // host hears it after the next block, the engine plays it.

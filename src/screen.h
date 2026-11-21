@@ -3,6 +3,8 @@
 #include "params.h"
 #include "ui/groups.h"
 
+#include "ui/masthead.h"
+#include "ui/torus.h"
 #include <atomic>
 #include <iterator>
 
@@ -31,12 +33,14 @@ public:
     void update (uint64_t now)
     {
         const auto hits = state.hits.load (std::memory_order_acquire);
-        if (hits != seenHits) { seenHits = hits; hitAt = now; hasHit = true; }
+        const bool struck = hits != seenHits;
+        const bool first = lastGroup < 0 || now < lastHost.nowMs;
+        if (first) { motionStart = now; hasHit = false; }
+        if (struck) { seenHits = hits; hitAt = now; hasHit = true; }
         step = std::clamp (state.step.load (std::memory_order_relaxed), 0, 7);
         running = state.running.load (std::memory_order_relaxed);
     }
 
-    bool animating (const Host& h) const { return hitLevel (h) > 0; }
     int pickedStep() const { return picked; }
 
     void knobs (uint32_t ids[3]) const
@@ -107,10 +111,37 @@ public:
         for (int k = 0; k < 3; ++k)
             pots |= h.pot[k] != lastHost.pot[k] || h.engaged[k] != lastHost.engaged[k];
         bool drew = false;
-        if (whole)
-            drew |= picture.region<240,60> (pixels, stride, whole, 0, 0, [](Raster& r) { masthead (r); });
-        if (page || sequence || parameters || lastFlash != flash)
-            drew |= picture.region<80,60> (pixels, stride, whole, 240, 0, [&](Raster& r) { status (r, h, flash); });
+        const uint64_t tick = (h.nowMs - motionStart) / hdui::torus::frameMs;
+        const int pose = int (tick % hdui::masthead::frames);
+        const int glint = hdui::masthead::glintFrame (tick);
+        const bool motion = whole || pose != lastPose;
+        const float cycle = float (pose % hdui::torus::frames) / hdui::torus::frames;
+        const float phase = cycle * hdui::torus::tau;
+        const float travel = 2.f * cycle; // one light/dark pair moves through per turn
+        const hdui::print::Drift drift (pose * hdui::torus::tau / hdui::masthead::frames);
+        if (motion)
+        {
+            drew |= picture.region<160,60> (pixels, stride, whole, 0, 0, [&](Raster& r) {
+                hdui::print::underprint (r, 0, drift);
+                hdui::masthead::draw (r, 0, phase, travel, drift.inkOffset);
+            });
+        }
+        if (motion || glint != lastGlint)
+        {
+            drew |= picture.region<80,60> (pixels, stride, whole, 160, 0, [&](Raster& r) {
+                hdui::print::underprint (r, 160, drift);
+                hdui::torus::Outlet outlet;
+                hdui::torus::draw (r, phase, outlet, drift.inkOffset);
+                hdui::masthead::draw (r, 160, phase, travel, drift.inkOffset, &outlet);
+                hdui::masthead::drawGlint (r, glint);
+            });
+        }
+        if (motion || page || sequence || parameters || lastFlash != flash)
+            drew |= picture.region<80,60> (pixels, stride, whole, 240, 0, [&](Raster& r) {
+                hdui::print::underprint (r, 240, drift);
+                hdui::masthead::draw (r, 240, phase, travel, drift.inkOffset);
+                status (r, h, flash);
+            });
         if (group == 0)
         {
             if (page || parameters)
@@ -140,6 +171,8 @@ public:
         lastRun = running;
         lastEdit = editing;
         lastFlash = flash;
+        lastPose = pose;
+        lastGlint = glint;
         lastHost = h;
         return drew;
     }
@@ -152,9 +185,10 @@ private:
     float sampled[ParamId::count] {};
     int group = 0, row = 0, picked = 0, step = 0;
     int lastGroup = -1, lastRow = 0, lastPicked = 0, lastStep = 0, lastFlash = 0;
+    int lastPose = -1, lastGlint = -1;
     bool running = false, editing = false, lastEdit = false, lastRun = false, hasHit = false;
     uint32_t seenHits = 0;
-    uint64_t hitAt = 0;
+    uint64_t hitAt = 0, motionStart = 0;
 
     int hitLevel (const Host& h) const
     {
@@ -179,36 +213,23 @@ private:
         return row + k < fields().count ? fields().fields[row + k].id : hdui::noParam;
     }
 
-    static void masthead (const Raster& r)
-    {
-        using namespace hdui;
-        for (unsigned y = 0; y < std::size (art::masthead); ++y)
-            for (unsigned x = 0; x < std::size (art::masthead[y]); ++x)
-            {
-                const auto pair = art::masthead[y][x];
-                r.dot (1 + int (2*x), y + 3, art::inks[pair >> 4]);
-                r.dot (2 + int (2*x), y + 3, art::inks[pair & 15]);
-            }
-        r.box (4, 59, 236, 1, ink::rule);
-    }
-
     void status (const Raster& r, const Host& h, int flash) const
     {
         using namespace hdui;
-        r.box (2, 7, 1, 46, ink::grid);
-        r.text (9, 6, fields().name, ink::paper);
-        for (int i = 0; i < 7; ++i) r.box (9 + i*9, 17, 7, 2, group == i ? ink::soft : ink::grid);
+        r.box (2, 5, 1, 25, ink::grid);
+        r.text (8, 4, fields().name, ink::paper);
+        char s[20];
+        std::snprintf (s, sizeof (s), "%02d/%02d", step + 1, int (val (ParamId::length)));
+        r.text (46, 4, s, ink::paper, 6);
+        for (int i = 0; i < 7; ++i) r.box (9 + i*9, 15, 7, 2, group == i ? ink::soft : ink::grid);
         const bool armed = val (ParamId::run) >= .5f;
-        r.text (9, 25, !armed ? "STOP" : (h.playing ? "RUN" : "ARMED"), ink::muted);
+        r.text (9, 21, !armed ? "STOP" : (h.playing ? "RUN" : "ARMED"), ink::muted);
         if (flash) // Hit count also covers auditions, MIDI triggers and ratchets.
         {
-            const int cx = 69, cy = 29;
+            const int cx = 69, cy = 25;
             r.box (cx - flash, cy, 2 * flash + 1, 1, ink::live);
             r.box (cx, cy - flash, 1, 2 * flash + 1, ink::live);
         }
-        char s[20];
-        std::snprintf (s, sizeof (s), "%02d / %02d", step + 1, int (val (ParamId::length)));
-        r.text (9, 43, s, ink::paper);
         r.box (0, 59, 76, 1, ink::rule);
     }
 

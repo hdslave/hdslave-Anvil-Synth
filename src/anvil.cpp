@@ -54,7 +54,6 @@ struct Plugin
     std::atomic<uint64_t> outgoing { 0 }, presses { 0 };
     std::atomic<int> audition { -1 };
     std::atomic<uint64_t> pressedAt { 0 }; // when the page last pressed (steady ms): a press kept waiting is dropped
-    std::atomic<bool> screenAnimating { false };
     bool valuesMoved = false; // the host moved a value in this block (audio thread): the page is painted again
     int shownStep = -1;
     uint32_t shownHits = 0;
@@ -538,7 +537,7 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     }
     for (; next < count; ++next) // events stamped past the block (a host's mistake): applied at its end
         handle (p, in->get (in, next), process->out_events, lastFrame);
-    // The screen: where the sequence is and whether it hit; a paint when that changed or a hit is still fading.
+    // Publish sequence and hit changes. The screen schedules its own animation frames.
     if (p.hostScreen != nullptr)
     {
         const int step = p.engine.currentStep();
@@ -552,7 +551,7 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
             p.stepState.hits.store (hits, std::memory_order_release);
             p.hostScreen->request_paint (p.host);
         }
-        else if (p.valuesMoved || p.screenAnimating.load (std::memory_order_relaxed))
+        else if (p.valuesMoved)
             p.hostScreen->request_paint (p.host);
     }
     p.valuesMoved = false;
@@ -584,11 +583,8 @@ bool screenPaint (const clap_plugin* plugin, const melodee_screen_canvas_t* c)
     const hdui::Host h = hostOf (c);
     p.screen.update (h.nowMs);
     const bool drew = p.screen.paint (h, c->pixels, (int) c->stride, c->whole);
-    const bool moving = p.screen.animating (h);
-    p.screenAnimating.store (moving, std::memory_order_relaxed);
-    // Still moving (a hit fading): the next paint is asked for from here too, not only from process(), which a host
-    // may not be running (Melodee's sleeping instrument).
-    if (moving && p.hostScreen != nullptr)
+    // Melodee can keep painting while the idle instrument sleeps.
+    if (p.hostScreen != nullptr)
         p.hostScreen->request_paint (p.host);
     return drew;
 }
