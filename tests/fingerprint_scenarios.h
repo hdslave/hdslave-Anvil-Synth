@@ -13,7 +13,7 @@ const std::vector<std::string> order02 { "VCO Decay", "1-2 FM Amt", "VCO EG > FM
 std::vector<Scenario> scenarios()
 {
     std::vector<Scenario> list;
-    for (const char* key : { "default", "kick", "fm-perc", "sync-bass", "noise-hat" })
+    for (const char* key : { "default", "kick", "fm-perc", "sync-bass", "noise-hat", "acid-steps", "ratchet-snare", "random-zap", "ping-pong-toms", "pad-kit" })
     {
         Scenario s;
         s.name = std::string ("preset-") + key;
@@ -45,7 +45,7 @@ std::vector<Scenario> scenarios()
     // Other block sizes (the same sound as random-0) and other rates.
     for (uint32_t block : { 1u, 37u, 4096u })
     {
-        Scenario s = list[7];
+        Scenario s = *std::find_if (list.begin(), list.end(), [] (const Scenario& x) { return x.name == "random-0"; });
         s.name = "random-0-block-" + std::to_string (block);
         s.block = block;
         list.push_back (s);

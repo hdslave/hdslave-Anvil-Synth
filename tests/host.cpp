@@ -4,6 +4,8 @@
 // renders as WAV files into the output folder.
 //   host Anvil.clap OUT_FOLDER
 #include "wav.h"
+#include "png.h"
+#include "../src/melodee_screen.h"
 
 #include <clap/clap.h>
 
@@ -28,12 +30,17 @@ const clap_plugin_entry* entry = nullptr;
 const clap_plugin_factory* factory = nullptr;
 
 // The host side: log, and the two a preset load tells (counted); the plug-in must cope without the rest.
-int rescans = 0, presetsLoaded = 0, presetErrors = 0;
+int rescans = 0, textRescans = 0, callbacks = 0, flushes = 0, paints = 0, presetsLoaded = 0, presetErrors = 0;
 const void* hostExtension (const clap_host*, const char* id)
 {
     static const clap_host_log log { [] (const clap_host*, clap_log_severity s, const char* m) { std::printf ("  [plug-in log %d] %s\n", (int) s, m); } };
-    static const clap_host_params params { [] (const clap_host*, clap_param_rescan_flags f) { rescans += (f & CLAP_PARAM_RESCAN_VALUES) != 0; },
-                                           [] (const clap_host*, clap_id, clap_param_clear_flags) {}, [] (const clap_host*) {} };
+    static const clap_host_params params { [] (const clap_host*, clap_param_rescan_flags f) {
+                                               rescans += (f & CLAP_PARAM_RESCAN_VALUES) != 0;
+                                               textRescans += (f & CLAP_PARAM_RESCAN_TEXT) != 0;
+                                           },
+                                           [] (const clap_host*, clap_id, clap_param_clear_flags) {}, [] (const clap_host*) { ++flushes; } };
+    static const clap_host_melodee_screen screen { [] (const clap_host*) { ++paints; } };
+    if (std::strcmp (id, CLAP_EXT_MELODEE_SCREEN_HOST) == 0) return &screen;
     static const clap_host_preset_load presetLoad {
         [] (const clap_host*, uint32_t, const char*, const char*, int32_t, const char*) { ++presetErrors; },
         [] (const clap_host*, uint32_t, const char*, const char*) { ++presetsLoaded; },
@@ -46,7 +53,7 @@ const void* hostExtension (const clap_host*, const char* id)
 
 clap_host host {
     CLAP_VERSION, nullptr, "Anvil test host", "tests", "", "1",
-    hostExtension, [] (const clap_host*) {}, [] (const clap_host*) {}, [] (const clap_host*) {},
+    hostExtension, [] (const clap_host*) {}, [] (const clap_host*) {}, [] (const clap_host*) { ++callbacks; },
 };
 
 // Input events for one process call, in time order.
@@ -267,7 +274,7 @@ void testParameters()
 {
     Instance a;
     const uint32_t count = a.params->count (a.plugin);
-    CHECK (count == 53);
+    CHECK (count == 54);
     std::map<clap_id, int> seen;
     for (uint32_t i = 0; i < count; ++i)
     {
@@ -289,7 +296,7 @@ void testParameters()
                               "VCO 2 Level", "Cutoff", "Resonance", "VCF Mode", "VCF Decay", "VCF EG Amt", "Noise/VCF Mod", "VCA EG",
                               "VCA Decay", "Volume", "Clock Div", "Run", "Trigger", "Advance", "Pitch 1", "Pitch 8", "Velocity 1", "Velocity 8",
                               "Noise Color", "Length", "Swing", "Notes", "Direction", "Chance", "Ratchet", "Vel > Cutoff",
-                              "Pitch > Cutoff", "VCF EG > VCO 2" })
+                              "Pitch > Cutoff", "VCF EG > VCO 2", "Quantize" })
         CHECK (a.ids.count (name) == 1);
 }
 
@@ -402,8 +409,10 @@ void testPresets()
         names.push_back (p.name), keys.push_back (p.key);
         CHECK (p.ours && (p.flags & CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT) != 0);
     }
-    CHECK ((names == std::vector<std::string> { "Default", "Kick", "FM Perc", "Sync Bass", "Noise Hat" }));
-    CHECK ((keys == std::vector<std::string> { "default", "kick", "fm-perc", "sync-bass", "noise-hat" }));
+    CHECK ((names == std::vector<std::string> { "Default", "Kick", "FM Perc", "Sync Bass", "Noise Hat", "Acid Steps", "Ratchet Snare",
+                                                "Random Zap", "Ping-Pong Toms", "Pad Kit" }));
+    CHECK ((keys == std::vector<std::string> { "default", "kick", "fm-perc", "sync-bass", "noise-hat", "acid-steps", "ratchet-snare",
+                                               "random-zap", "ping-pong-toms", "pad-kit" }));
 
     Instance a;
     CHECK (a.presets != nullptr);
@@ -1030,6 +1039,11 @@ void demos (const std::string& folder)
         { "demo-noise-hat.wav", "noise-hat", { { "VCO 1 Level", 0.0 }, { "VCO 2 Level", 0.0 }, { "Noise Level", 1.0 }, { "VCF Mode", 1.0 }, { "Cutoff", 0.75 },
                                   { "Resonance", 0.3 }, { "VCA Decay", 0.15 }, { "Clock Div", sixteenth }, { "Velocity 2", 0.4 }, { "Velocity 4", 0.4 },
                                   { "Velocity 6", 0.4 }, { "Velocity 8", 0.4 } } },
+        { "demo-acid-steps.wav", "acid-steps", { { "VCO 1 Freq", 0.34 }, { "VCO 2 Freq", 0.342 }, { "VCO 1 Level", 0.7 }, { "VCO 2 Level", 0.6 }, { "VCO 1 EG Amt", 0.0 }, { "VCO 2 EG Amt", 0.0 }, { "VCO Decay", 0.3 }, { "Cutoff", 0.42 }, { "Resonance", 0.6 }, { "VCF EG Amt", 0.45 }, { "VCF Decay", 0.33 }, { "VCA Decay", 0.42 }, { "Clock Div", 5.0 }, { "Length", 7.0 }, { "Swing", 0.58 }, { "Quantize", 4.0 }, { "Pitch > Cutoff", 0.5 }, { "Vel > Cutoff", 0.4 }, { "Pitch 3", 0.2 }, { "Pitch 4", 0.05 }, { "Pitch 6", 0.117 }, { "Pitch 7", 0.083 }, { "Velocity 2", 0.5 }, { "Velocity 3", 0.8 }, { "Velocity 4", 0.6 }, { "Velocity 5", 1.0 }, { "Velocity 6", 0.4 }, { "Velocity 7", 0.7 } } },
+        { "demo-ratchet-snare.wav", "ratchet-snare", { { "VCO 1 Freq", 0.565 }, { "VCO 1 Wave", 1.0 }, { "VCO 1 EG Amt", 0.15 }, { "VCO Decay", 0.2 }, { "VCO 1 Level", 0.5 }, { "VCO 2 Level", 0.0 }, { "Noise Level", 0.85 }, { "Cutoff", 0.72 }, { "Resonance", 0.25 }, { "VCF EG Amt", 0.2 }, { "VCF Decay", 0.25 }, { "VCA Decay", 0.3 }, { "Clock Div", 3.0 }, { "Ratchet", 2.0 }, { "Chance", 0.85 }, { "Velocity 1", 0.35 }, { "Velocity 2", 0.25 }, { "Velocity 3", 1.0 }, { "Velocity 4", 0.3 }, { "Velocity 5", 0.35 }, { "Velocity 6", 0.25 }, { "Velocity 7", 1.0 }, { "Velocity 8", 0.45 } } },
+        { "demo-random-zap.wav", "random-zap", { { "VCO 2 Freq", 0.75 }, { "VCO 2 EG Amt", 0.7 }, { "VCO Decay", 0.28 }, { "1-2 FM Amt", 0.3 }, { "VCO EG > FM 1-2 Amt", 0.5 }, { "VCO 1 Freq", 0.45 }, { "VCO 1 Level", 0.0 }, { "VCO 2 Level", 1.0 }, { "Cutoff", 0.8 }, { "Resonance", 0.35 }, { "VCF EG Amt", 0.0 }, { "VCF EG > VCO 2", 0.25 }, { "VCF Decay", 0.35 }, { "VCA Decay", 0.32 }, { "Clock Div", 5.0 }, { "Direction", 3.0 }, { "Chance", 0.7 }, { "Quantize", 6.0 }, { "Pitch 2", 0.2 }, { "Pitch 3", -0.2 }, { "Pitch 4", 0.117 }, { "Pitch 5", 0.3 }, { "Pitch 6", -0.1 }, { "Pitch 7", 0.4 }, { "Pitch 8", 0.083 }, { "Velocity 2", 0.7 }, { "Velocity 3", 0.9 }, { "Velocity 4", 0.6 }, { "Velocity 6", 0.8 }, { "Velocity 7", 0.65 }, { "Velocity 8", 0.75 } } },
+        { "demo-ping-pong-toms.wav", "ping-pong-toms", { { "VCO 1 Freq", 0.42 }, { "VCO 1 Wave", 1.0 }, { "VCO 1 EG Amt", 0.25 }, { "VCO Decay", 0.3 }, { "VCO 2 Freq", 0.425 }, { "VCO 2 Wave", 1.0 }, { "VCO 2 Level", 0.4 }, { "VCO 2 EG Amt", 0.25 }, { "Noise Level", 0.05 }, { "Cutoff", 0.6 }, { "Resonance", 0.2 }, { "VCF EG Amt", 0.25 }, { "VCF Decay", 0.35 }, { "VCA Decay", 0.45 }, { "Clock Div", 5.0 }, { "Length", 6.0 }, { "Direction", 2.0 }, { "Swing", 0.62 }, { "Quantize", 3.0 }, { "Pitch 1", 0.15 }, { "Pitch 2", 0.1 }, { "Pitch 3", 0.05 }, { "Pitch 5", -0.05 }, { "Pitch 6", -0.1 }, { "Velocity 2", 0.7 }, { "Velocity 3", 0.85 }, { "Velocity 4", 0.6 }, { "Velocity 5", 0.9 }, { "Velocity 6", 0.65 } } },
+        { "demo-pad-kit.wav", "pad-kit", { { "Notes", 1.0 }, { "VCO 1 Wave", 1.0 }, { "VCO 1 Freq", 0.3 }, { "VCO 1 EG Amt", 0.5 }, { "VCO Decay", 0.22 }, { "VCO 1 Level", 1.0 }, { "VCO 2 Level", 0.0 }, { "Noise Level", 0.35 }, { "Cutoff", 0.5 }, { "Resonance", 0.15 }, { "VCF EG Amt", 0.35 }, { "VCF Decay", 0.25 }, { "VCA Decay", 0.35 }, { "Pitch > Cutoff", 0.8 }, { "Vel > Cutoff", 0.3 }, { "Clock Div", 5.0 }, { "Pitch 2", 0.25 }, { "Pitch 3", 0.4 }, { "Pitch 4", 0.55 }, { "Pitch 5", 0.7 }, { "Pitch 6", 0.85 }, { "Pitch 7", 1.0 }, { "Pitch 8", 0.6 }, { "Velocity 2", 0.5 }, { "Velocity 3", 0.8 }, { "Velocity 4", 0.5 }, { "Velocity 5", 0.9 }, { "Velocity 6", 0.45 }, { "Velocity 7", 0.7 } } },
     };
     for (auto& demo : list)
     {
@@ -1049,6 +1063,154 @@ void demos (const std::string& folder)
     }
 }
 } // namespace
+
+void testQuantize()
+{
+    // One held hit (Trigger, the transport stopped), VCO 1 alone as a triangle at 144 Hz through an open filter;
+    // step 1's Pitch at 10.8 % of +-5 octaves: 6.48 semitones up.
+    auto held = [] (Instance& a, std::vector<std::pair<std::string, double>> extra) {
+        std::vector<std::pair<std::string, double>> v { { "VCO 1 Level", 1.0 }, { "VCO 2 Level", 0.0 }, { "Noise Level", 0.0 },
+            { "VCO 1 Wave", 1.0 }, { "VCO 1 EG Amt", 0.0 }, { "VCO 2 EG Amt", 0.0 }, { "Cutoff", 1.0 }, { "Resonance", 0.0 },
+            { "VCF EG Amt", 0.0 }, { "VCA Decay", 1.0 }, { "Volume", 0.5 }, { "VCO 1 Freq", 0.5 } };
+        v.insert (v.end(), extra.begin(), extra.end());
+        a.setup (v);
+        std::vector<float> l, r;
+        a.render (48000, 128, l, r, [] (uint64_t) { return Transport { false, 120.0, 0.0 }; }, [&] (uint64_t at, uint32_t, Events& e) {
+            if (at == 0) a.set (e, "Trigger", 1.0);
+        });
+        return crossings (l, 9600, 33600) / 0.5;
+    };
+    struct Case { const char* quantize; double pitch, hz; };
+    for (const Case& c : { Case { "Off", 0.108, 209.5 }, Case { "Semitones", 0.108, 203.6 }, Case { "Major", 0.108, 215.7 },
+                           Case { "Fifths", 0.108, 215.7 }, Case { "Octaves", 0.108, 288.0 }, Case { "Off", -0.108, 99.0 },
+                           Case { "Semitones", -0.108, 101.8 }, Case { "Minor Pent", -0.108, 96.1 },
+                           Case { "Octaves", -0.108, 72.0 } })
+    {
+        Instance a;
+        const double f = held (a, { { "Pitch 1", c.pitch }, { "Quantize", a.valueOf ("Quantize", c.quantize) } });
+        if (std::getenv ("ANVIL_DEBUG"))
+            std::printf ("debug quantize %s %+.3f: %.1f Hz (want %.1f)\n", c.quantize, c.pitch, f, c.hz);
+        CHECK (std::fabs (f - c.hz) <= 2.0);
+    }
+    // The steps' Pitch reads as Quantize plays it; a change of Quantize asks the host to read the texts again.
+    Instance a;
+    char text[64] = {};
+    auto pitchText = [&] () { a.params->value_to_text (a.plugin, a.id ("Pitch 1"), 0.108, text, sizeof (text)); return std::string (text); };
+    CHECK (pitchText() == "+6.5 st");
+    a.plugin->on_main_thread (a.plugin); // as a host does after any earlier request
+    const int callbacksBefore = callbacks, textBefore = textRescans;
+    a.setup ({ { "Quantize", a.valueOf ("Quantize", "Semitones") } });
+    CHECK (pitchText() == "+6 st");
+    CHECK (callbacks > callbacksBefore);
+    a.plugin->on_main_thread (a.plugin);
+    CHECK (textRescans == textBefore + 1);
+    a.setup ({ { "Quantize", a.valueOf ("Quantize", "Major") } });
+    CHECK (pitchText() == "+7 st");
+    double back = 0;
+    CHECK (a.params->text_to_value (a.plugin, a.id ("Pitch 1"), "+7 st", &back) && std::fabs (back - 7.0 / 60.0) < 1e-6);
+}
+
+// Melodee's screen: the page draws, answers the wheel, Push and Minus / Plus, names K1-K3, sends what it changes to
+// the host and the engine, and plays a step. Its pictures go to OUT_FOLDER/screen-*.png for a look.
+void testScreen (const std::string& folder)
+{
+    Instance a;
+    const auto* screen = static_cast<const clap_plugin_melodee_screen*> (a.plugin->get_extension (a.plugin, CLAP_EXT_MELODEE_SCREEN));
+    CHECK (screen != nullptr);
+    if (screen == nullptr)
+        return;
+    std::vector<uint32_t> pixels (MELODEE_SCREEN_WIDTH * MELODEE_SCREEN_HEIGHT, 0);
+    melodee_screen_canvas_t canvas {};
+    canvas.pixels = pixels.data();
+    canvas.width = MELODEE_SCREEN_WIDTH, canvas.height = MELODEE_SCREEN_HEIGHT, canvas.stride = MELODEE_SCREEN_WIDTH;
+    canvas.accent = 0xffff8a3d;
+    for (auto& k : canvas.knobs)
+        k = { -1, true };
+    uint64_t now = 1000;
+    auto paint = [&] (bool whole = false) { canvas.whole = whole, canvas.now_ms = now; return screen->paint (a.plugin, &canvas); };
+    auto shot = [&] (const char* name) { paint (true); CHECK (writePng ((folder + "/screen-" + name + ".png").c_str(), pixels.data(), 320, 218, 320, 2)); };
+    auto in = [&] (uint32_t kind, int value, bool shift = false) { melodee_screen_input_t e { kind, value, shift }; return screen->input (a.plugin, &e); };
+    auto knobs = [&] () { std::vector<clap_id> ids (3); screen->knobs (a.plugin, ids.data()); return ids; };
+    auto play = [&] (uint32_t frames, bool playing, double fromBeats, OutEvents* out = nullptr) {
+        std::vector<float> l, r;
+        a.render (frames, 128, l, r, [&] (uint64_t at) { return playing ? playingFrom (fromBeats, 120.0, 48000.0, at) : Transport { false, 120.0, 0.0 }; }, {}, out);
+        now += frames * 1000 / 48000;
+        return l;
+    };
+
+    // First paint draws; the same picture again does not.
+    CHECK (paint (true));
+    CHECK (! paint());
+    // A value moved from outside the page (a pot, automation, a preset) asks for a paint, which shows it.
+    int before = paints;
+    a.setup ({ { "Cutoff", 0.3 } });
+    CHECK (paints > before);
+    CHECK (paint());
+    before = paints;
+    CHECK (a.loadPreset ("kick"));
+    CHECK (paints > before);
+    CHECK (a.loadPreset ("default"));
+    // STEPS: K1-K3 are step 1's Pitch and Velocity and the Cutoff; the wheel picks step 3.
+    CHECK ((knobs() == std::vector<clap_id> { a.id ("Pitch 1"), a.id ("Velocity 1"), a.id ("Cutoff") }));
+    CHECK (in (MELODEE_SCREEN_WHEEL, 2));
+    CHECK ((knobs() == std::vector<clap_id> { a.id ("Pitch 3"), a.id ("Velocity 3"), a.id ("Cutoff") }));
+    // Push plays step 3 (stopped, nothing else would sound).
+    auto quiet = play (4800, false, 0.0);
+    CHECK (std::all_of (quiet.begin(), quiet.end(), [] (float v) { return v == 0.0f; }));
+    CHECK (in (MELODEE_SCREEN_PUSH, 0));
+    auto hit = play (4800, false, 0.0);
+    CHECK (std::any_of (hit.begin(), hit.end(), [] (float v) { return std::fabs (v) > 1e-3f; }));
+    // Playing: the page asks to be painted as the steps go by, and lights the step playing.
+    a.setup ({ { "Pitch 2", 0.3 }, { "Pitch 4", -0.25 }, { "Pitch 6", 0.15 }, { "Velocity 3", 0.4 }, { "Quantize", a.valueOf ("Quantize", "Minor") },
+               { "Length", 7 } });
+    const int paintsBefore = paints;
+    play (48000 + 6000, true, 0.0);
+    CHECK (paints > paintsBefore + 4);
+    canvas.playing = true;
+    CHECK (paint());
+    shot ("steps");
+    // VCO: Plus moves to the next group; K1-K3 follow the cursor; Push edits, the wheel changes 1-2 FM Amt, the
+    // host hears it after the next block, the engine plays it.
+    CHECK (in (MELODEE_SCREEN_NUDGE, 1));
+    CHECK ((knobs() == std::vector<clap_id> { a.id ("VCO Decay"), a.id ("1-2 FM Amt"), a.id ("VCO EG > FM 1-2 Amt") }));
+    CHECK (in (MELODEE_SCREEN_WHEEL, 1));
+    CHECK (in (MELODEE_SCREEN_PUSH, 0));
+    const int flushesBefore = flushes;
+    CHECK (in (MELODEE_SCREEN_WHEEL, 16));
+    CHECK (flushes > flushesBefore);
+    CHECK (std::fabs (a.value ("1-2 FM Amt") - 16.0 / 128.0) < 1e-6);
+    OutEvents told;
+    play (128, true, 2.25, &told);
+    CHECK (std::any_of (told.values.begin(), told.values.end(), [&] (auto& v) { return v.first == a.id ("1-2 FM Amt") && std::fabs (v.second - 0.125) < 1e-6; }));
+    canvas.knobs[1] = { 90, false }; // K2 has yet to meet its value: the card shows where to move it
+    shot ("vco-editing");
+    canvas.knobs[1] = { -1, true };
+    CHECK (in (MELODEE_SCREEN_PUSH, 0)); // leave editing
+    // VCF, then SEQ: Trigger is a button (no pot); Push on it plays the step the sequence is on.
+    CHECK (in (MELODEE_SCREEN_NUDGE, 1) && in (MELODEE_SCREEN_NUDGE, 1));
+    shot ("vcf");
+    for (int i = 0; i < 4; ++i)
+        in (MELODEE_SCREEN_NUDGE, 1);
+    CHECK (! in (MELODEE_SCREEN_NUDGE, 1)); // the last group
+    CHECK (in (MELODEE_SCREEN_WHEEL, 9));
+    CHECK ((knobs() == std::vector<clap_id> { CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID })); // Trigger, Advance: buttons
+    shot ("seq");
+    a.setup ({ { "VCA Decay", 1.0 } });
+    play (24000, false, 0.0);
+    CHECK (in (MELODEE_SCREEN_PUSH, 0));
+    hit = play (4800, false, 0.0);
+    CHECK (std::any_of (hit.begin(), hit.end(), [] (float v) { return std::fabs (v) > 1e-3f; }));
+    // Editing a choice: Quantize, a step a detent; Shift shows the controls.
+    CHECK (in (MELODEE_SCREEN_WHEEL, -3));
+    CHECK ((knobs()[0] == a.id ("Quantize")));
+    in (MELODEE_SCREEN_PUSH, 0);
+    in (MELODEE_SCREEN_WHEEL, -1); // Minor (set above) to Major
+    CHECK (a.value ("Quantize") == a.valueOf ("Quantize", "Major"));
+    in (MELODEE_SCREEN_PUSH, 0);
+    canvas.shift = true;
+    shot ("shift");
+    canvas.shift = false;
+}
 
 int main (int argc, char** argv)
 {
@@ -1084,6 +1246,8 @@ int main (int argc, char** argv)
     testPatchRoutings();
     testVelocity();
     testPitchAndFm();
+    testQuantize();
+    testScreen (argv[2]);
     testExtremes();
     demos (argv[2]);
     entry->deinit();

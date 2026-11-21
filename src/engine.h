@@ -362,6 +362,11 @@ public:
     // Where the sequence's own count is: for a host that gives no song position (0 when it last stopped).
     double ownPosition() const { return playing ? position : 0.0; }
 
+    // For the screen: the step the sequence is on, how many hits it has played, whether the host's clock moves it.
+    int currentStep() const { return stepIndex; }
+    uint32_t hitCount() const { return played; }
+    bool running() const { return playing && knob[ParamId::run] >= 0.5f; }
+
     // The host's transport at the start of a process call of `frames`.
     void transport (bool isPlaying, double beats, double bpm, uint32_t frames)
     {
@@ -551,6 +556,7 @@ private:
 
     void fireStep (int s, float v)
     {
+        ++played;
         heldPitch = knob[ParamId::pitch1 + s];
         stepLevel = v;
         retarget();
@@ -580,7 +586,9 @@ private:
     void retarget()
     {
         const int mod = (int) knob[ParamId::seqPitchMod];
-        const float seq = heldPitch * seqPitchOctaves;
+        // The held step's pitch in octaves, as Quantize plays it (Off: the knob as it is).
+        const int quantize = (int) knob[ParamId::quantize];
+        const float seq = quantize == 0 ? heldPitch * seqPitchOctaves : quantizedSemitones (heldPitch, quantize) * (1.0f / 12.0f);
         target[pitch1] = std::log2 (vcoLowHz) + knob[ParamId::vco1Freq] * vcoOctaves + (mod == 0 ? seq : 0.0f);
         target[pitch2] = std::log2 (vcoLowHz) + knob[ParamId::vco2Freq] * vcoOctaves + (mod != 1 ? seq : 0.0f);
         target[eg1] = knob[ParamId::vco1EgAmt] * vcoEgOctaves;
@@ -720,6 +728,7 @@ private:
     bool playing = false, aligned = false, regridWanted = false, dirty = true, moving = false, runPressed = false;
     int64_t lastStep = -1, travel = 0;
     int stepIndex = 0;
+    uint32_t played = 0; // hits played (for the screen)
     // Ratchet: the hits left in this step, and when the next comes (frames since prepare()).
     uint64_t now = 0, ratchetFrom = 0, ratchetNext = 0;
     double ratchetGap = 0.0;

@@ -3,6 +3,11 @@ preset-kick a446454941e46d81
 preset-fm-perc 07bae300dfcdf335
 preset-sync-bass 712ed91b411c9d05
 preset-noise-hat f2bdf28e7d79c5f5
+preset-acid-steps 2f0c90297bc10f99
+preset-ratchet-snare 41cb0770b597495d
+preset-random-zap 8148ffb931de52a5
+preset-ping-pong-toms 175e97076db415a1
+preset-pad-kit 4ed1b2e9b6ab29c9
 bench-worst 5469feaa1fe1c3b1
 bench-typical 1524f272e20a5bb9
 random-0 48c160f4d52b4575

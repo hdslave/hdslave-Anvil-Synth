@@ -20,6 +20,8 @@ VCO 1 + noise (white/pink) + VCO 2 ──► mixer (clips when hot)
 
 Every step triggers all three envelopes at its velocity. A softer step does not cut a louder tail still falling.
 
+On the MPC it draws its own page on the screen (see [The screen](#the-screen)).
+
 ## Controls
 
 The panel's names, in the order Melodee's Edit page lists them (three to a page).
@@ -59,6 +61,7 @@ The panel's names, in the order Melodee's Edit page lists them (three to a page)
 | Trigger | TRIGGER | TRIGGER | plays the current step without moving |
 | Advance | ADVANCE | ADVANCE | moves one step without playing (in the Direction set) |
 | Notes | — | — | What a MIDI note does: **Trigger** plays the step the sequence is on, as Trigger does; **Steps** plays the step the key names, at its pitch and velocity times the note's: notes 36–43 (a Melodee drum track's pads 1–8) are steps 1–8, and so on up and down the keyboard |
+| Quantize | — | — | Off / Semitones / Major / Minor / Minor Pent / Phrygian / Fifths / Octaves: the steps' Pitch snaps to semitones, or to the nearest note of the scale counted from the VCOs' own pitch (a step at 0 plays the Freq knobs as they are). The Pitch knobs then read as the note they play. Off: any pitch, as on the panel |
 | Pitch 1–8 | PITCH 1–8 | PITCH | ±5 octaves |
 | Velocity 1–8 | VELOCITY 1–8 | VEL | 0 – 100 % |
 
@@ -74,7 +77,7 @@ Negative, with 1-2 FM Amt up: the hit starts clean and the FM grows as the envel
 
 ## Presets
 
-Five factory presets, inside the plug-in: Melodee lists them on the plug-in's PRESETS page (any host with CLAP preset
+Ten factory presets, inside the plug-in: Melodee lists them on the plug-in's PRESETS page (any host with CLAP preset
 discovery does). A preset sets every control, Clock Div and the eight steps too; Default puts everything back.
 
 | Preset | What it is |
@@ -84,9 +87,29 @@ discovery does). A preset sets every control, Clock Div and the eight steps too;
 | FM Perc | VCO 2 frequency-modulated, its depth riding the VCO EG (the new control at +70 %), a stepped pitch line in 1/16 |
 | Sync Bass | VCO 2 hard-synced and swept, a resonant low pass, the slow VCA attack, a pitch line in 1/16 |
 | Noise Hat | White noise through the high pass, accented on the odd 1/16 steps |
+| Acid Steps | A bassline in a key: Quantize Minor Pent, 7 steps swung (58 %), the cutoff following each step's pitch and velocity (Pitch > Cutoff, Vel > Cutoff) |
+| Ratchet Snare | Noise and a swept triangle, every eighth hit twice (Ratchet 2), the backbeat loud, Chance leaving out a few ghost notes |
+| Random Zap | Laser zaps in a Random order: VCO 2 swept down, FM riding the VCO EG, VCF EG > VCO 2, steps a fifth or an octave apart (Quantize Fifths), some left out (Chance) |
+| Ping-Pong Toms | Six toms down a minor scale and back up (Ping-Pong, Length 6, Quantize Minor), swung |
+| Pad Kit | Notes: Steps: eight drums on pads 36–43, low to high, the higher brighter (Pitch > Cutoff); with the transport running it plays them as a pattern too (Run: Stop for the pads alone) |
 
 They are the patches the demo renders play: the tests load each preset and check it gives the same values and the
 same samples as the demo's list.
+
+## The screen
+
+In Melodee (melodee-hdslave with its plug-in screen), Anvil draws its own page in place of the parameter list:
+
+- **STEPS**, the panel's sequencer: the eight steps' pitch (bars from a middle line, full height ±2.5 octaves) and
+  velocity, each pitch read as Quantize plays it, the step playing lit, steps past Length dimmed. The wheel picks a
+  step (framed), Push plays it as a pad would, K1 and K2 turn its Pitch and Velocity, K3 the Cutoff.
+- **VCO, MIX, VCF, VCA, PATCH, SEQ**: the panel's knobs by section, the steps beside them.
+
+On a list the controls are hdslave Machine's: the wheel moves a row; Push edits it (the wheel then changes it: a
+choice a step, a knob 1/128, 1/1024 with Shift; Push again leaves), or presses a button (Trigger, Advance); Minus /
+Plus change group (while editing, a choice or a whole number a step, a knob a sixteenth of its range); K1-K3 turn the cursor's row and the two under it, with
+Melodee's takeover (a hollow mark shows where to move a pot). Hold Shift for these. Another host never asks for the
+page.
 
 ## Clocking from the host
 
@@ -122,8 +145,8 @@ Instructions a 128-frame block takes, from `tools/bench.sh` (callgrind):
 
 | Case | Instructions | Share of one A55 core at 1 instruction a cycle |
 |---|---|---|
-| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 82,000 | 1.7 % |
-| A short percussive pattern | about 77,000 | 1.6 % |
+| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 81,000 | 1.7 % |
+| A short percussive pattern | about 76,000 | 1.6 % |
 | Stopped | under 600 | 0.01 % |
 
 While the VCA is closed between hits the oscillators and filter are skipped. The voice's two samples a frame, and the
@@ -147,11 +170,14 @@ a loop wrapping inside a block, a host without a song position; the same output 
 128, 4096 frames); Trigger, Advance, Run and MIDI notes; Length (a cycle of 3, Advance wrapping in it) and Swing (66 and
 75 %, and a jump between a step's grid line and its late clock); Notes: Steps (notes 36 to 39 and 44, a softer note);
 each Direction (the order read back from the steps' levels; Random the same twice); Chance (0 %, 50 % the same twice);
+Quantize (each scale's note from the pitch heard; the Pitch texts by it, and the host asked to read them again); the
+screen's page (it draws, picks and plays a step, its controls set the values the host then hears, its buttons press;
+pictures in `build/screen-*.png`);
 Ratchet (three hits a step, evenly spaced); the patch routings (each the same sound as turning Cutoff as far, from the
 second step; at 0 they change nothing; VCF EG > VCO 2 bending VCO 2); velocity and tails; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
 
-`tests/fingerprint.cpp` then renders 53 fixed scenarios (each preset, the bench's patches, 24 random patches with the
+`tests/fingerprint.cpp` then renders 58 fixed scenarios (each preset, the bench's patches, 24 random patches with the
 buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps, Length and Swing, each Direction with
 Chance and Ratchet, the patch routings, notes playing steps) and hashes every output sample's bits
 against `tests/fingerprint.txt`: work meant to keep the sound, such as a speed-up, must leave every hash as it is. A
@@ -163,3 +189,10 @@ hashes hold for Melodee's build image and these compiler flags.
 Copy `build/Anvil.clap` to `Melodee/Plugins/hdslave Anvil/hdslave Anvil.clap` on the card (or the staged card's
 folder), then pick it on an empty track: Stage, Plugin, hdslave Anvil. It needs only libc and libm (glibc 2.35 or
 older).
+
+## Credits
+
+- The screen's type: Departure Mono, copyright 2022–2024 Helena Zhang, SIL Open Font License 1.1
+  (`licenses/OFL-departure-mono.txt`); its glyphs are rasterized into `src/ui/font.h`.
+- The screen extension's header, `src/melodee_screen.h`, is melodee-hdslave's, MIT.
+- CLAP headers: MIT license, `third_party/clap/LICENSE`.

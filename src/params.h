@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.4.0"
+#define ANVIL_VERSION "0.5.0"
 #endif
 
 namespace anvil
@@ -27,6 +27,7 @@ enum : uint32_t
     noiseColor, // added after the rest: ids never move
     length, swing, // 0.3.0
     noteMode, direction, chance, ratchet, velCutoff, pitchCutoff, vcfEgVco2, // 0.4.0
+    quantize, // 0.5.0
     count
 };
 }
@@ -94,6 +95,36 @@ constexpr int firstStepNote = 36;
 // Amt does (8 octaves); a step's pitch moves the cutoff by as much as it moves the VCO (1:1 tracking).
 constexpr float velCutoffOctaves = 4.0f, vcfEgVco2Octaves = 8.0f;
 inline const char* const noiseColorChoices[] = { "White", "Pink" };
+// Quantize: the steps' Pitch knobs snap to semitones, or to the notes of a scale counted from the VCOs' own pitch (the
+// Freq knobs: a step at 0 plays them as they are). Off: as the panel's, any pitch.
+inline const char* const quantizeChoices[] = { "Off", "Semitones", "Major", "Minor", "Minor Pent", "Phrygian", "Fifths", "Octaves" };
+struct QuantizeScale { uint8_t count; uint8_t notes[7]; };
+inline constexpr QuantizeScale quantizeScales[] = {
+    { 0, {} }, { 12, {} }, { 7, { 0, 2, 4, 5, 7, 9, 11 } }, { 7, { 0, 2, 3, 5, 7, 8, 10 } }, { 5, { 0, 3, 5, 7, 10 } },
+    { 7, { 0, 1, 3, 5, 7, 8, 10 } }, { 2, { 0, 7 } }, { 1, { 0 } },
+};
+// A step's Pitch knob (-1..1, +-5 octaves) as Quantize plays it, in semitones; Off leaves it as it is.
+inline float quantizedSemitones (float knobValue, int quantize)
+{
+    const float semis = knobValue * seqPitchOctaves * 12.0f;
+    if (quantize <= 0)
+        return semis;
+    if (quantize == 1)
+        return std::floor (semis + 0.5f);
+    const QuantizeScale& scale = quantizeScales[quantize];
+    const float octave = std::floor (semis / 12.0f), within = semis - 12.0f * octave;
+    float best = 12.0f; // the next octave's root
+    for (int i = 0; i < scale.count; ++i)
+        if (std::fabs (within - scale.notes[i]) < std::fabs (within - best) || (std::fabs (within - scale.notes[i]) == std::fabs (within - best) && scale.notes[i] > best))
+            best = scale.notes[i];
+    return 12.0f * octave + best;
+}
+
+// The other values a parameter's text depends on: the steps' Pitch reads as Quantize plays it.
+struct TextContext
+{
+    float quantize = 0.0f;
+};
 // The clock replaces the panel's Tempo: a step is this much of a bar's quarter notes at the host's tempo.
 inline const char* const clockDivChoices[] = { "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T", "1/64" };
 constexpr double clockDivBeats[] = { 2.0, 1.0, 2.0 / 3.0, 0.5, 1.0 / 3.0, 0.25, 1.0 / 6.0, 0.125, 1.0 / 12.0, 0.0625 };
@@ -145,6 +176,7 @@ inline constexpr Param paramTable[] = {
     BUTTON (trigger, "Trigger", "Sequencer"),
     BUTTON (advance, "Advance", "Sequencer"),
     CHOICE (noteMode, "Notes", "Sequencer", noteModeChoices, 0.0f),
+    CHOICE (quantize, "Quantize", "Sequencer", quantizeChoices, 0.0f),
     CONT (pitch1, "Pitch 1", "Sequencer/Pitch", -1.0f, 1.0f, 0.0f, semitones),
     CONT (pitch2, "Pitch 2", "Sequencer/Pitch", -1.0f, 1.0f, 0.0f, semitones),
     CONT (pitch3, "Pitch 3", "Sequencer/Pitch", -1.0f, 1.0f, 0.0f, semitones),
@@ -169,6 +201,7 @@ inline constexpr Param paramTable[] = {
 
 constexpr uint32_t paramCount = sizeof (paramTable) / sizeof (paramTable[0]);
 static_assert (paramCount == ParamId::count, "every id has one row");
+static_assert (paramCount <= 64, "the screen keeps a bit a row");
 
 // The table's row for an id (ids are the rows' order today, but a host gives ids, so they are looked up).
 struct IndexOfId
@@ -192,7 +225,7 @@ inline float clampParam (const Param& p, float v)
     return p.kind == Kind::continuous ? v : std::round (v);
 }
 
-inline void formatParam (const Param& p, float v, char* text, uint32_t size)
+inline void formatParam (const Param& p, float v, char* text, uint32_t size, const TextContext& context = {})
 {
     v = clampParam (p, v);
     auto time = [&] (float s) {
@@ -213,7 +246,12 @@ inline void formatParam (const Param& p, float v, char* text, uint32_t size)
         case Unit::gain: std::snprintf (text, size, "%.0f %%", v * 100.0f); break;
         case Unit::bipolar: std::snprintf (text, size, "%+.0f %%", v * 100.0f); break;
         case Unit::octaves: std::snprintf (text, size, "%+.2f oct", v); break;
-        case Unit::semitones: std::snprintf (text, size, "%+.1f st", v * seqPitchOctaves * 12.0f); break;
+        case Unit::semitones:
+            if (context.quantize >= 0.5f)
+                std::snprintf (text, size, "%+.0f st", quantizedSemitones (v, (int) context.quantize));
+            else
+                std::snprintf (text, size, "%+.1f st", v * seqPitchOctaves * 12.0f);
+            break;
         case Unit::plainInt: std::snprintf (text, size, "%d", (int) v); break;
         case Unit::choice: std::snprintf (text, size, "%s", p.choices[(int) v]); break;
         case Unit::button: std::snprintf (text, size, "%s", v >= 0.5f ? "Pressed" : "Press"); break;
