@@ -135,16 +135,17 @@ void handle (Plugin& p, const clap_event_header* e, const clap_output_events* ou
         }
         case CLAP_EVENT_NOTE_ON:
         {
+            // Notes: Trigger plays the step the sequence is on; Notes: Steps the step the key names.
             const auto* n = reinterpret_cast<const clap_event_note*> (e);
-            if (n->velocity > 0.0)
-                p.engine.press (ParamId::trigger);
+            if (n->velocity > 0.0 && n->key >= 0 && n->key < 128)
+                p.engine.note (n->key, (float) n->velocity);
             break;
         }
         case CLAP_EVENT_MIDI:
         {
             const auto* m = reinterpret_cast<const clap_event_midi*> (e);
             if ((m->data[0] & 0xf0) == 0x90 && m->data[2] > 0)
-                p.engine.press (ParamId::trigger);
+                p.engine.note (m->data[1] & 0x7f, (float) (m->data[2] & 0x7f) / 127.0f);
             break;
         }
         default: break;
@@ -313,7 +314,7 @@ bool noteGet (const clap_plugin*, uint32_t index, bool input, clap_note_port_inf
     info->id = 0;
     info->supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
     info->preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
-    std::snprintf (info->name, sizeof (info->name), "Trigger");
+    std::snprintf (info->name, sizeof (info->name), "Notes");
     return true;
 }
 const clap_plugin_note_ports noteExtension { noteCount, noteGet };

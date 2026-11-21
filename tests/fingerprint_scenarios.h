@@ -90,6 +90,37 @@ std::vector<Scenario> scenarios()
             };
             list.push_back (s);
         }
+    // 0.4: each direction with Chance and Ratchet; the patch routings; notes playing steps.
+    const char* const directions[] = { "forward", "backward", "ping-pong", "random" };
+    for (int d = 0; d < 4; ++d)
+    {
+        Scenario s;
+        s.name = std::string ("direction-") + directions[d];
+        s.preset = "sync-bass";
+        s.values = { { "Direction", (double) d }, { "Length", 6.0 }, { "Chance", 0.7 }, { "Ratchet", (double) (1 + d % 3) } };
+        s.seconds = 5.0;
+        s.events = { { 50000, Event::param, "Advance", 1.0 }, { 130001, Event::param, "Ratchet", 4.0 } };
+        list.push_back (s);
+    }
+    Scenario routed;
+    routed.name = "patch-routings";
+    routed.preset = "fm-perc";
+    routed.values = { { "Vel > Cutoff", 0.6 }, { "Pitch > Cutoff", -0.4 }, { "VCF EG > VCO 2", 0.3 } };
+    routed.events = { { 120000, Event::param, "VCF EG > VCO 2", -0.5 }, { 200000, Event::param, "Vel > Cutoff", -1.0 } };
+    list.push_back (routed);
+    for (bool playing : { true, false })
+    {
+        Scenario s;
+        s.name = std::string ("notes-steps-") + (playing ? "playing" : "stopped");
+        s.preset = "kick";
+        s.values = { { "Notes", 1.0 } };
+        s.seconds = 4.0;
+        for (int i = 0; i < 12; ++i)
+            s.events.push_back ({ (uint64_t) (4000 + i * 15000), Event::noteOn, "", (double) (36 + (i * 5) % 9) });
+        if (! playing)
+            s.transport = [] (uint64_t, double, double) -> std::pair<bool, double> { return { false, 0.0 }; };
+        list.push_back (s);
+    }
     return list;
 }
 } // namespace

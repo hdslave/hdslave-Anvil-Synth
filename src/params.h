@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.3.0"
+#define ANVIL_VERSION "0.4.0"
 #endif
 
 namespace anvil
@@ -26,6 +26,7 @@ enum : uint32_t
     velocity1, velocity2, velocity3, velocity4, velocity5, velocity6, velocity7, velocity8,
     noiseColor, // added after the rest: ids never move
     length, swing, // 0.3.0
+    noteMode, direction, chance, ratchet, velCutoff, pitchCutoff, vcfEgVco2, // 0.4.0
     count
 };
 }
@@ -85,6 +86,13 @@ inline const char* const waveChoices[] = { "Square", "Triangle" };
 inline const char* const vcfModeChoices[] = { "Low Pass", "High Pass" };
 inline const char* const vcaEgChoices[] = { "Fast", "Slow" };
 inline const char* const runChoices[] = { "Stop", "Run" };
+inline const char* const noteModeChoices[] = { "Trigger", "Steps" };
+inline const char* const directionChoices[] = { "Forward", "Backward", "Ping-Pong", "Random" };
+// Notes: Steps: MIDI notes 36 to 43 (a Melodee drum track's pads 1 to 8) play steps 1 to 8; every 8 notes up, again.
+constexpr int firstStepNote = 36;
+// The patch routings at full turn: velocity moves the cutoff 4 octaves; the VCF EG moves VCO 2 as far as a VCO EG
+// Amt does (8 octaves); a step's pitch moves the cutoff by as much as it moves the VCO (1:1 tracking).
+constexpr float velCutoffOctaves = 4.0f, vcfEgVco2Octaves = 8.0f;
 inline const char* const noiseColorChoices[] = { "White", "Pink" };
 // The clock replaces the panel's Tempo: a step is this much of a bar's quarter notes at the host's tempo.
 inline const char* const clockDivChoices[] = { "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T", "1/64" };
@@ -124,12 +132,19 @@ inline constexpr Param paramTable[] = {
     CHOICE (vcaEg, "VCA EG", "VCA", vcaEgChoices, 0.0f),
     CONT (vcaDecay, "VCA Decay", "VCA", 0.0f, 1.0f, 0.4f, decay),
     CONT (volume, "Volume", "VCA", 0.0f, 1.0f, 0.7f, gain),
+    CONT (velCutoff, "Vel > Cutoff", "Patch", -1.0f, 1.0f, 0.0f, bipolar),
+    CONT (pitchCutoff, "Pitch > Cutoff", "Patch", -1.0f, 1.0f, 0.0f, bipolar),
+    CONT (vcfEgVco2, "VCF EG > VCO 2", "Patch", -1.0f, 1.0f, 0.0f, bipolar),
     CHOICE (clockDiv, "Clock Div", "Sequencer", clockDivChoices, 3.0f),
     INT (length, "Length", "Sequencer", 1.0f, 8.0f, 8.0f, plainInt),
     CONT (swing, "Swing", "Sequencer", 0.5f, 0.75f, 0.5f, percent),
+    CHOICE (direction, "Direction", "Sequencer", directionChoices, 0.0f),
+    CONT (chance, "Chance", "Sequencer", 0.0f, 1.0f, 1.0f, percent),
+    INT (ratchet, "Ratchet", "Sequencer", 1.0f, 4.0f, 1.0f, plainInt),
     CHOICE (run, "Run", "Sequencer", runChoices, 1.0f),
     BUTTON (trigger, "Trigger", "Sequencer"),
     BUTTON (advance, "Advance", "Sequencer"),
+    CHOICE (noteMode, "Notes", "Sequencer", noteModeChoices, 0.0f),
     CONT (pitch1, "Pitch 1", "Sequencer/Pitch", -1.0f, 1.0f, 0.0f, semitones),
     CONT (pitch2, "Pitch 2", "Sequencer/Pitch", -1.0f, 1.0f, 0.0f, semitones),
     CONT (pitch3, "Pitch 3", "Sequencer/Pitch", -1.0f, 1.0f, 0.0f, semitones),

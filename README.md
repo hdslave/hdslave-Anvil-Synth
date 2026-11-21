@@ -46,16 +46,24 @@ The panel's names, in the order Melodee's Edit page lists them (three to a page)
 | VCA EG | VCA EG FAST/SLOW | VCA MODE | Fast (1 ms attack) / Slow (100 ms) |
 | VCA Decay | VCA DECAY | DECAY | 10 ms – 10 s |
 | Volume | VOLUME | VOLUME | 0 – 100 % |
+| Vel > Cutoff | — (patch: VELOCITY to VCF MOD) | — (patch) | ±100 %: a step's velocity moves the cutoff, up to 4 octaves at full velocity |
+| Pitch > Cutoff | — (patch: PITCH to VCF MOD) | — (patch) | ±100 %: a step's pitch moves the cutoff as far as it moves the VCOs at 100 % (key tracking) |
+| VCF EG > VCO 2 | — (patch: VCF EG to VCO 2 CV) | — (patch) | ±100 %: the VCF EG bends VCO 2's pitch, up to 8 octaves at full velocity |
 | Clock Div | TEMPO (replaced) | SCALE | 1/2 … 1/64 of the host's beat, with triplets |
 | Length | — (patch cables) | — (patch cables) | 1 – 8 steps: the sequence plays steps 1 to Length, then step 1 again (on the panels, a cable from a step's trigger to Reset) |
 | Swing | — | — | 50 – 75 %: the second step of each pair comes late, at that share of the pair, as an MPC's swing does (66 %: a triplet shuffle) |
+| Direction | — | — | Forward / Backward (1, Length … 2) / Ping-Pong (1 … Length … 2) / Random. Random follows the song's place: the same steps when the same part plays again |
+| Chance | — | — | 0 – 100 %: how likely each step is to sound (a silent step still moves the sequence); also the same for the same place in the song |
+| Ratchet | — | — | 1 – 4 hits a step, spread evenly over it |
 | Run | RUN/STOP | PLAY/STOP | Stop / Run |
 | Trigger | TRIGGER | TRIGGER | plays the current step without moving |
-| Advance | ADVANCE | ADVANCE | moves one step without playing |
+| Advance | ADVANCE | ADVANCE | moves one step without playing (in the Direction set) |
+| Notes | — | — | What a MIDI note does: **Trigger** plays the step the sequence is on, as Trigger does; **Steps** plays the step the key names, at its pitch and velocity times the note's: notes 36–43 (a Melodee drum track's pads 1–8) are steps 1–8, and so on up and down the keyboard |
 | Pitch 1–8 | PITCH 1–8 | PITCH | ±5 octaves |
 | Velocity 1–8 | VELOCITY 1–8 | VEL | 0 – 100 % |
 
-A MIDI note (a pad on a Melodee plug-in track) does what Trigger does.
+A MIDI note (a pad on a Melodee plug-in track) does what Trigger does, or with Notes: Steps plays a step of its own:
+with the transport stopped, the eight steps become eight drum sounds on eight pads.
 
 ### The new control
 
@@ -137,11 +145,15 @@ The tests load the plug-in through the CLAP API and check: description and ports
 default; state save and load; the presets as preset discovery lists them and preset-load loads them; step timing to the frame at 44.1, 48 and 96 kHz and two tempos; stop, restart, jumps,
 a loop wrapping inside a block, a host without a song position; the same output whatever the block size (1, 37,
 128, 4096 frames); Trigger, Advance, Run and MIDI notes; Length (a cycle of 3, Advance wrapping in it) and Swing (66 and
-75 %, and a jump between a step's grid line and its late clock); velocity and tails; VCO pitch, step pitch on each Seq Pitch
+75 %, and a jump between a step's grid line and its late clock); Notes: Steps (notes 36 to 39 and 44, a softer note);
+each Direction (the order read back from the steps' levels; Random the same twice); Chance (0 %, 50 % the same twice);
+Ratchet (three hits a step, evenly spaced); the patch routings (each the same sound as turning Cutoff as far, from the
+second step; at 0 they change nothing; VCF EG > VCO 2 bending VCO 2); velocity and tails; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
 
-`tests/fingerprint.cpp` then renders 46 fixed scenarios (each preset, the bench's patches, 24 random patches with the
-buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps, Length and Swing) and hashes every output sample's bits
+`tests/fingerprint.cpp` then renders 53 fixed scenarios (each preset, the bench's patches, 24 random patches with the
+buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps, Length and Swing, each Direction with
+Chance and Ratchet, the patch routings, notes playing steps) and hashes every output sample's bits
 against `tests/fingerprint.txt`: work meant to keep the sound, such as a speed-up, must leave every hash as it is. A
 change meant to change the sound updates them with `make fingerprint-update` (run inside the build image). The
 hashes hold for Melodee's build image and these compiler flags.

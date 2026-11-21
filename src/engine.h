@@ -6,7 +6,8 @@
 //   VCO 1 + VCO 2 + noise (white or pink) --> mixer (clips when hot)
 //     --> 4-pole ladder (LP or HP; VCF EG and noise move the cutoff) --> VCA (its EG) --> Volume --> out
 //
-// Every step of the 8-step sequencer (Length plays fewer) triggers all three envelopes. The clock is the host's: a step starts on each
+// Every step of the 8-step sequencer (Length plays fewer; Direction, Chance and Ratchet reshape it) triggers all three
+// envelopes. The clock is the host's: a step starts on each
 // multiple of Clock Div from the song's top, while the host plays.
 //
 // Cost: no allocation, no locks, no branches on the sound's path beyond the oscillators' edges; the knobs are
@@ -304,6 +305,9 @@ public:
         playing = aligned = false;
         lastStep = -1;
         stepIndex = 0;
+        travel = 0;
+        now = 0;
+        ratchetsLeft = 0;
         dirty = true;
         retarget();
         for (int i = 0; i < smoothed; ++i)
@@ -330,12 +334,29 @@ public:
     {
         if (id == ParamId::advance)
         {
-            stepIndex = nextStep (stepIndex);
+            stepIndex = following (stepIndex);
             heldPitch = knob[ParamId::pitch1 + stepIndex]; // the pitch CV follows the step, sounding or not
             dirty = true;
         }
         else
             fire();
+    }
+
+    // A MIDI note: Notes: Trigger plays the step the sequence is on (as Trigger does); Notes: Steps plays the step the
+    // key names: 36 to 43 are steps 1 to 8, and so on up and down the keyboard.
+    void note (int key, float velocity)
+    {
+        if (knob[ParamId::noteMode] >= 0.5f)
+            playStep (((key - firstStepNote) % 8 + 8) % 8, velocity);
+        else
+            fire();
+    }
+
+    // Notes: Steps: a note plays step `s` at once, at its pitch and velocity (times the note's), without moving the
+    // sequence.
+    void playStep (int s, float velocity)
+    {
+        fireStep (s & 7, knob[ParamId::velocity1 + (s & 7)] * velocity);
     }
 
     // Where the sequence's own count is: for a host that gives no song position (0 when it last stopped).
@@ -364,6 +385,18 @@ public:
         while (frames > 0)
         {
             uint32_t run = frames;
+            if (ratchetsLeft > 0)
+            {
+                // Ratchet: the step's further hits, spread evenly over it.
+                if (now >= ratchetNext)
+                {
+                    fire();
+                    if (--ratchetsLeft > 0)
+                        ratchetNext = ratchetFrom + (uint64_t) std::llround (ratchetGap * (double) (ratchetCount - ratchetsLeft));
+                    continue;
+                }
+                run = (uint32_t) std::min<uint64_t> (run, ratchetNext - now);
+            }
             if (runPressed)
             {
                 runPressed = false;
@@ -381,10 +414,24 @@ public:
                     // A step starts on this frame: the sequence moves on and plays it (with Run off it holds where
                     // it is and stays silent, as the panel's sequencer does when stopped).
                     ++lastStep;
+                    ratchetsLeft = 0;
                     if (knob[ParamId::run] >= 0.5f)
                     {
                         advanceTo (lastStep);
-                        fire();
+                        // Chance: whether this clock's step sounds, the same for the same place in the song.
+                        if (knob[ParamId::chance] >= 1.0f || unit (lastStep, 0x5bd1e995u) < knob[ParamId::chance])
+                        {
+                            fire();
+                            const int hits = (int) knob[ParamId::ratchet];
+                            if (hits > 1)
+                            {
+                                ratchetCount = hits;
+                                ratchetsLeft = hits - 1;
+                                ratchetFrom = now;
+                                ratchetGap = (clockBeat (lastStep + 1) - clockBeat (lastStep)) / perFrame / hits;
+                                ratchetNext = ratchetFrom + (uint64_t) std::llround (ratchetGap);
+                            }
+                        }
                     }
                     continue;
                 }
@@ -393,6 +440,7 @@ public:
                     run = (uint32_t) untilStep;
             }
             sound (left, right, run);
+            now += run;
             if (playing)
                 position += run * perFrame;
             left += run;
@@ -408,6 +456,40 @@ private:
     int length() const { return std::max (1, (int) knob[ParamId::length]); }
     // The step after `s`: Length steps, then step 1 again.
     int nextStep (int s) const { return s + 1 >= length() ? 0 : s + 1; }
+    int direction() const { return (int) knob[ParamId::direction]; }
+
+    // A number in [0, 1) from a clock's number: the same for the same place in the song (Chance, Random).
+    static float unit (int64_t n, uint32_t salt)
+    {
+        uint64_t x = (uint64_t) n * 0x9e3779b97f4a7c15ull + salt;
+        x ^= x >> 30, x *= 0xbf58476d1ce4e5b9ull, x ^= x >> 27, x *= 0x94d049bb133111ebull, x ^= x >> 31;
+        return (float) (x >> 40) * (1.0f / 16777216.0f);
+    }
+    // The step for the `n`th clock of the sequence (n = 0: step 1) when it does not go forward: Backward is 1, L, L-1
+    // ... 2; Ping-Pong 1 ... L ... 2, its ends once; Random any of the L.
+    int stepFor (int64_t n) const
+    {
+        const int64_t len = length();
+        switch (direction())
+        {
+            case 1: return (int) ((len - ((n % len) + len) % len) % len);
+            case 2:
+            {
+                if (len == 1)
+                    return 0;
+                const int64_t period = 2 * len - 2, at = ((n % period) + period) % period;
+                return (int) (at < len ? at : period - at);
+            }
+            case 3: return (int) (unit (n, 0x2545f491u) * (float) len) % (int) len;
+            default: return (int) (((n % len) + len) % len);
+        }
+    }
+    // The step after this one: forward as always; the other directions by their count.
+    int following (int s)
+    {
+        ++travel;
+        return direction() == 0 ? nextStep (s) : stepFor (travel);
+    }
 
     // Swing: the second clock of each pair comes later, at Swing's share of the pair (50 %: straight, 66 %: a
     // triplet shuffle, 75 %: a dotted one), as an MPC's swing does. At 50 % the clocks are k grids from the top, worked
@@ -454,20 +536,28 @@ private:
     {
         const int64_t n = length();
         if (! aligned)
-            stepIndex = (int) (((clock % n) + n) % n), aligned = true;
+        {
+            travel = clock;
+            stepIndex = direction() == 0 ? (int) (((clock % n) + n) % n) : stepFor (clock);
+            aligned = true;
+        }
         else
-            stepIndex = nextStep (stepIndex);
+            stepIndex = following (stepIndex);
     }
 
     // All three envelopes, toward the step's velocity, with its pitch held from now (no glide into a step: it lands on
     // it). A louder step also decays a little longer.
-    void fire()
+    void fire() { fireStep (stepIndex, knob[ParamId::velocity1 + stepIndex]); }
+
+    void fireStep (int s, float v)
     {
-        heldPitch = knob[ParamId::pitch1 + stepIndex];
-        const float v = knob[ParamId::velocity1 + stepIndex];
+        heldPitch = knob[ParamId::pitch1 + s];
+        stepLevel = v;
         retarget();
         smooth[pitch1] = target[pitch1];
         smooth[pitch2] = target[pitch2];
+        if (knob[ParamId::velCutoff] != 0.0f || knob[ParamId::pitchCutoff] != 0.0f)
+            smooth[cut] = target[cut]; // the step's own cutoff from its first sample
         const float longer = 0.9f + 0.2f * v;
         vcoEg.decay = decayOf (knob[ParamId::vcoDecay], longer);
         vcfEg.decay = decayOf (knob[ParamId::vcfDecay], longer);
@@ -485,7 +575,7 @@ private:
 
     // --- Knobs ---
     // What the knobs and the held step ask for; the sound eases toward it every 8 frames.
-    enum Smoothed { pitch1, pitch2, eg1, eg2, fm, egFm, level1, level2, levelNoise, cut, res, vcfAmt, noiseMod, gain, smoothed };
+    enum Smoothed { pitch1, pitch2, eg1, eg2, fm, egFm, level1, level2, levelNoise, cut, res, vcfAmt, noiseMod, gain, vcfVco2, smoothed };
 
     void retarget()
     {
@@ -500,7 +590,10 @@ private:
         target[level1] = knob[ParamId::vco1Level] * knob[ParamId::vco1Level];
         target[level2] = knob[ParamId::vco2Level] * knob[ParamId::vco2Level];
         target[levelNoise] = knob[ParamId::noiseLevel] * knob[ParamId::noiseLevel];
-        target[cut] = std::log2 (cutoffLowHz) + knob[ParamId::cutoff] * cutoffOctaves;
+        // The patch routings: the step's velocity and pitch move the cutoff (0 when their knobs are at 0).
+        target[cut] = std::log2 (cutoffLowHz) + knob[ParamId::cutoff] * cutoffOctaves
+                    + knob[ParamId::velCutoff] * stepLevel * velCutoffOctaves + knob[ParamId::pitchCutoff] * seq;
+        target[vcfVco2] = knob[ParamId::vcfEgVco2] * vcfEgVco2Octaves;
         target[res] = knob[ParamId::resonance] * (knob[ParamId::vcfMode] >= 0.5f ? maxFeedbackHighPass : maxFeedback);
         target[vcfAmt] = knob[ParamId::vcfEgAmt] * vcfEgOctaves;
         target[noiseMod] = knob[ParamId::noiseVcfMod] * noiseVcfOctaves;
@@ -595,7 +688,7 @@ private:
         const float v1 = osc1.step (tri1, dt1, wrapped);
         const float depth = clampf (smooth[fm] + smooth[egFm] * eVco, 0.0f, 1.0f);
         const float swing = 1.0f + depth * fmIndex * Oscillator::triangle (osc1.phase);
-        const float dt2 = clampf (exp2Fast (smooth[pitch2] + eVco * smooth[eg2]) * invInner * swing, 1.0e-9f, 0.45f);
+        const float dt2 = clampf (exp2Fast (smooth[pitch2] + eVco * smooth[eg2] + eVcf * smooth[vcfVco2]) * invInner * swing, 1.0e-9f, 0.45f);
         const float v2 = osc2.stepSynced (tri2, dt2, sync ? wrapped : -1.0f);
         // Noise: a 32-bit xorshift, white, or pink through three poles.
         noise ^= noise << 13, noise ^= noise >> 17, noise ^= noise << 5;
@@ -621,12 +714,16 @@ private:
     float inner = 96000.0f, invInner = 1.0f / 96000.0f;
     float knob[ParamId::count] {};
     float target[smoothed] {}, smooth[smoothed] {};
-    float heldPitch = 0.0f, velocityLonger = 1.0f;
+    float heldPitch = 0.0f, velocityLonger = 1.0f, stepLevel = 0.0f;
     float pink[3] {}, pinkPole[3] {};
     bool tri1 = false, tri2 = false, sync = false, highPass = false, pinkNoise = false;
     bool playing = false, aligned = false, regridWanted = false, dirty = true, moving = false, runPressed = false;
-    int64_t lastStep = -1;
+    int64_t lastStep = -1, travel = 0;
     int stepIndex = 0;
+    // Ratchet: the hits left in this step, and when the next comes (frames since prepare()).
+    uint64_t now = 0, ratchetFrom = 0, ratchetNext = 0;
+    double ratchetGap = 0.0;
+    int ratchetsLeft = 0, ratchetCount = 0;
     uint32_t tick = 0, lastBlock = 0, noise = 0x9e3779b9u;
     Envelope vcoEg, vcfEg, vcaEg;
     Oscillator osc1, osc2;

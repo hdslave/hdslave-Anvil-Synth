@@ -44,3 +44,10 @@ length-3-swing-75 e50cf9977a83d405
 length-1-swing-50 b9c300ec424c35a5
 length-1-swing-62 a5e8790bda2b8ead
 length-1-swing-75 6be12796c563f701
+direction-forward af1863d776661b2d
+direction-backward bac2ff0d41f429b1
+direction-ping-pong 1a803a75ad29a901
+direction-random ed308f88610fdd8d
+patch-routings 173b2ca708f70a61
+notes-steps-playing 71fef5944e0dd03d
+notes-steps-stopped 7fbb1ede34a751a5

@@ -267,7 +267,7 @@ void testParameters()
 {
     Instance a;
     const uint32_t count = a.params->count (a.plugin);
-    CHECK (count == 46);
+    CHECK (count == 53);
     std::map<clap_id, int> seen;
     for (uint32_t i = 0; i < count; ++i)
     {
@@ -288,7 +288,8 @@ void testParameters()
                               "VCO 2 EG Amt", "VCO 2 Wave", "1-2 FM Amt", "VCO EG > FM 1-2 Amt", "VCO 1 Level", "Noise Level",
                               "VCO 2 Level", "Cutoff", "Resonance", "VCF Mode", "VCF Decay", "VCF EG Amt", "Noise/VCF Mod", "VCA EG",
                               "VCA Decay", "Volume", "Clock Div", "Run", "Trigger", "Advance", "Pitch 1", "Pitch 8", "Velocity 1", "Velocity 8",
-                              "Noise Color", "Length", "Swing" })
+                              "Noise Color", "Length", "Swing", "Notes", "Direction", "Chance", "Ratchet", "Vel > Cutoff",
+                              "Pitch > Cutoff", "VCF EG > VCO 2" })
         CHECK (a.ids.count (name) == 1);
 }
 
@@ -703,6 +704,179 @@ void testLengthAndSwing()
     }
 }
 
+long crossings (const std::vector<float>& x, size_t from, size_t to, float hysteresis);
+
+// Each step's own level (its velocity) tells which step played: the peak of each step's hit.
+std::vector<float> stepPeaks (const std::vector<float>& l, long stepFrames, int steps)
+{
+    std::vector<float> out;
+    for (int k = 0; k < steps; ++k)
+    {
+        float m = 0.0f;
+        for (long i = k * stepFrames; i < (k + 1) * stepFrames && i < (long) l.size(); ++i)
+            m = std::max (m, std::fabs (l[(size_t) i]));
+        out.push_back (m);
+    }
+    return out;
+}
+
+// The step (0-based) whose level a peak is: the nearest of `levels`.
+int whichStep (float peak, const std::vector<float>& levels)
+{
+    int best = 0;
+    for (int i = 1; i < (int) levels.size(); ++i)
+        if (std::fabs (levels[(size_t) i] - peak) < std::fabs (levels[(size_t) best] - peak))
+            best = i;
+    return best;
+}
+
+void testNotesAndDirection()
+{
+    std::vector<float> l, r;
+    auto patch = [] (Instance& a, int length) {
+        auto p = clickPatch (a);
+        p.push_back ({ "Length", length });
+        for (int i = 1; i <= 8; ++i)
+            p.push_back ({ "Velocity " + std::to_string (i), 0.12 * i });
+        return p;
+    };
+    // The steps' levels, from a forward run (from its second hit: the first starts with the filter empty).
+    Instance f;
+    f.setup (patch (f, 4));
+    f.render (48000 * 3, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+    const auto forward = stepPeaks (l, 12000, 12);
+    const std::vector<float> levels { forward[4], forward[5], forward[6], forward[7] };
+    CHECK (levels[0] < levels[1] && levels[1] < levels[2] && levels[2] < levels[3]);
+    // Backward 1 4 3 2, Ping-Pong 1 2 3 4 3 2, Random: the same steps when played again, not in order.
+    struct Way { const char* name; std::vector<int> order; };
+    for (const Way& way : { Way { "Backward", { 0, 3, 2, 1 } }, Way { "Ping-Pong", { 0, 1, 2, 3, 2, 1 } } })
+    {
+        Instance a;
+        auto p = patch (a, 4);
+        p.push_back ({ "Direction", a.valueOf ("Direction", way.name) });
+        a.setup (p);
+        a.render (48000 * 4, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+        const auto peaks = stepPeaks (l, 12000, 16);
+        bool ordered = true;
+        for (int k = 1; k < 16; ++k)
+            ordered &= whichStep (peaks[(size_t) k], levels) == way.order[(size_t) k % way.order.size()];
+        CHECK (ordered);
+    }
+    std::vector<int> once, again;
+    for (auto* steps : { &once, &again })
+    {
+        Instance a;
+        auto p = patch (a, 4);
+        p.push_back ({ "Direction", a.valueOf ("Direction", "Random") });
+        a.setup (p);
+        a.render (48000 * 4, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+        const auto peaks = stepPeaks (l, 12000, 16);
+        for (int k = 1; k < 16; ++k)
+            steps->push_back (whichStep (peaks[(size_t) k], levels));
+    }
+    int inOrder = 0;
+    for (size_t k = 1; k < once.size(); ++k)
+        inOrder += once[k] == (once[k - 1] + 1) % 4;
+    CHECK (once == again && inOrder < 10);
+    // Notes: Steps, the transport stopped: notes 36 to 39 play steps 1 to 4, 44 is step 1 again, and a softer note
+    // plays its step softer.
+    Instance n;
+    auto p = patch (n, 8);
+    p.push_back ({ "Notes", n.valueOf ("Notes", "Steps") });
+    n.setup (p);
+    const int keys[] = { 36, 36, 37, 38, 39, 44, 39 };
+    const double velocity[] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5 };
+    n.render (48000 * 2, 128, l, r, [] (uint64_t) { return Transport { false, 120.0, 0.0 }; }, [&] (uint64_t at, uint32_t, Events& e) {
+        for (int i = 0; i < 7; ++i)
+            if (at == (uint64_t) i * 12032) e.note (0, CLAP_EVENT_NOTE_ON, (int16_t) keys[i], velocity[i]);
+    });
+    const auto hit = stepPeaks (l, 12032, 7);
+    CHECK (whichStep (hit[1], levels) == 0 && whichStep (hit[2], levels) == 1 && whichStep (hit[3], levels) == 2);
+    CHECK (whichStep (hit[4], levels) == 3 && whichStep (hit[5], levels) == 0 && hit[6] < hit[4] * 0.7f);
+}
+
+void testChanceAndRatchet()
+{
+    std::vector<float> l, r, l2, r2;
+    auto t = [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); };
+    // Chance 0 %: nothing plays; 50 %: about half the steps, the same ones when played again.
+    {
+        Instance a;
+        auto p = clickPatch (a);
+        p.push_back ({ "Chance", 0.0 });
+        a.setup (p);
+        a.render (48000 * 2, 128, l, r, t);
+        CHECK (onsets (l).empty());
+    }
+    std::vector<long> once, again;
+    for (auto* hits : { &once, &again })
+    {
+        Instance a;
+        auto p = clickPatch (a);
+        p.push_back ({ "Chance", 0.5 });
+        a.setup (p);
+        a.render (48000 * 8, 128, l, r, t);
+        *hits = onsets (l);
+    }
+    CHECK (once == again && once.size() >= 8 && once.size() <= 24); // of 32 steps
+    // Ratchet 3: three hits a step, a third of a step apart (eighths at 120 BPM: 4,000 frames).
+    Instance a;
+    auto p = clickPatch (a);
+    p.push_back ({ "Ratchet", 3 });
+    p.push_back ({ "VCA Decay", 0.0 });
+    a.setup (p);
+    a.render (48000 * 2, 128, l, r, t);
+    const auto hits = onsets (l, 1e-3f, 1e-4f, 96);
+    CHECK (hits.size() == 24);
+    bool spaced = hits.size() == 24;
+    for (size_t i = 4; spaced && i < hits.size(); ++i) // from the second step on
+        spaced = std::labs ((hits[i] - hits[3]) - (long) (i - 3) * 4000) <= 2;
+    CHECK (spaced);
+}
+
+void testPatchRoutings()
+{
+    // A darker patch than the click: VCO 1 at 144 Hz through a low cutoff.
+    auto render = [] (std::vector<std::pair<std::string, double>> extra) {
+        Instance a;
+        std::vector<std::pair<std::string, double>> v { { "VCO 1 Level", 1.0 }, { "VCO 2 Level", 0.0 }, { "Noise Level", 0.0 }, { "VCO 1 Freq", 0.5 },
+            { "VCO 1 EG Amt", 0.0 }, { "Cutoff", 0.35 }, { "Resonance", 0.0 }, { "VCF EG Amt", 0.0 }, { "VCA Decay", 0.5 }, { "Clock Div", 3.0 },
+            { "Velocity 1", 1.0 }, { "Velocity 2", 0.2 }, { "Pitch 1", 0.0 }, { "Pitch 2", 0.0 }, { "Length", 2.0 } };
+        v.insert (v.end(), extra.begin(), extra.end());
+        a.setup (v);
+        std::vector<float> l, r;
+        a.render (48000 * 2, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+        return l;
+    };
+    // A routing moves the cutoff as far as turning Cutoff would (the knob spans 10 octaves): one step on repeat
+    // (Length 1) with a routing, against no routing and the knob that far up: the same sound from the second step
+    // (the first differs: a knob set just before Play is still easing in, where a routing lands on the step).
+    auto rmsDiff = [] (const std::vector<float>& a, const std::vector<float>& b) {
+        double d = 0, e = 0;
+        for (size_t i = 12000; i < a.size(); ++i) d += (double) (a[i] - b[i]) * (a[i] - b[i]), e += (double) b[i] * b[i];
+        return std::sqrt (d / (e + 1e-30));
+    };
+    // Pitch > Cutoff +100 %: Pitch 1 an octave up (0.2 of +-5 octaves) takes the cutoff an octave (0.1) up; -100 % down.
+    CHECK (rmsDiff (render ({ { "Length", 1 }, { "Pitch 1", 0.2 }, { "Pitch > Cutoff", 1.0 } }), render ({ { "Length", 1 }, { "Pitch 1", 0.2 }, { "Cutoff", 0.45 } })) < 1e-4);
+    CHECK (rmsDiff (render ({ { "Length", 1 }, { "Pitch 1", 0.2 }, { "Pitch > Cutoff", -1.0 } }), render ({ { "Length", 1 }, { "Pitch 1", 0.2 }, { "Cutoff", 0.25 } })) < 1e-4);
+    // Vel > Cutoff +100 %: velocity 0.5 takes it 2 octaves up (4 at full velocity).
+    CHECK (rmsDiff (render ({ { "Length", 1 }, { "Velocity 1", 0.5 }, { "Vel > Cutoff", 1.0 }, { "Cutoff", 0.25 } }),
+                    render ({ { "Length", 1 }, { "Velocity 1", 0.5 }, { "Cutoff", 0.45 } })) < 1e-4);
+    // And without them the two steps' cutoffs are the same: the routings at 0 change nothing.
+    CHECK (rmsDiff (render ({ { "Vel > Cutoff", 0.0 }, { "Pitch > Cutoff", 0.0 } }), render ({})) == 0.0);
+    // VCF EG > VCO 2: VCO 2 alone, a long VCF EG: its pitch high at the hit and falling with the envelope.
+    Instance a;
+    a.setup ({ { "VCO 1 Level", 0.0 }, { "VCO 2 Level", 1.0 }, { "VCO 2 Wave", 1.0 }, { "VCO 2 Freq", 0.4 }, { "VCO 2 EG Amt", 0.0 },
+               { "Cutoff", 1.0 }, { "Resonance", 0.0 }, { "VCF EG Amt", 0.0 }, { "VCF Decay", 0.6 }, { "VCA EG", 0.0 }, { "VCA Decay", 1.0 },
+               { "VCF EG > VCO 2", 0.25 }, { "1-2 FM Amt", 0.0 } });
+    std::vector<float> l, r;
+    a.render (48000, 128, l, r, [] (uint64_t) { return Transport { false, 120.0, 0.0 }; }, [&] (uint64_t at, uint32_t, Events& e) {
+        if (at == 0) a.set (e, "Trigger", 1.0);
+    });
+    const double early = crossings (l, 0, 2400, 0.002f) / 0.05, late = crossings (l, 38400, 48000, 0.002f) / 0.2;
+    CHECK (early > late * 2.0);
+}
+
 void testVelocity()
 {
     // A soft step after a loud one with a long tail: the tail is not cut (it keeps falling smoothly), and a
@@ -905,6 +1079,9 @@ int main (int argc, char** argv)
     testBlockSizes();
     testButtonsAndNotes();
     testLengthAndSwing();
+    testNotesAndDirection();
+    testChanceAndRatchet();
+    testPatchRoutings();
     testVelocity();
     testPitchAndFm();
     testExtremes();
