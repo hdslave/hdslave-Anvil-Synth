@@ -98,7 +98,7 @@ same samples as the demo's list.
 
 ## The screen
 
-In Melodee (melodee-hdslave with its plug-in screen), Anvil draws its own page in place of the parameter list:
+In hdslaveOS (hdslave's Melodee fork), Anvil draws its own page in place of the parameter list:
 
 - **STEPS**, the panel's sequencer: the eight steps' pitch (bars from a middle line, full height ±2.5 octaves) and
   velocity, each pitch read as Quantize plays it, the step playing lit, steps past Length dimmed. The wheel picks a
@@ -199,12 +199,12 @@ hashes hold for Melodee's build image and these compiler flags.
 ## Install
 
 Copy `build/Anvil.clap` to `Melodee/Plugins/hdslave Anvil/hdslave Anvil.clap` on the card (or the staged card's
-folder), then pick it on an empty track: Stage, Plugin, hdslave Anvil. It needs only libc and libm (glibc 2.35 or
-older).
+folder), then pick it on an empty track: Stage, Plugin, hdslave Anvil. It needs only libc and libm, glibc 2.35 or
+newer (the MPC has 2.39).
 
 ## Credits
 
 - The screen's type: Departure Mono, copyright 2022–2024 Helena Zhang, SIL Open Font License 1.1
   (`licenses/OFL-departure-mono.txt`); its glyphs are rasterized into `src/ui/font.h`.
-- The screen extension's header, `src/melodee_screen.h`, is melodee-hdslave's, MIT.
+- The screen extension's header, `src/melodee_screen.h`, is hdslaveOS's, MIT.
 - CLAP headers: MIT license, `third_party/clap/LICENSE`.

@@ -13,7 +13,7 @@ Each list keeps a small pitch and velocity score on the right. VCO shows the two
 
 ## Reproducing the previews
 
-From the checkout root, run the build and capture the actual plug-in in Melodee. The host executable comes from the adjacent screen worktree, mounted read-only. The capture script uses the running Colima `melodee` profile and `melodee-builder` image.
+From the checkout root, run the build and capture the actual plug-in in Melodee. The host executable comes from the adjacent hdslaveOS checkout (`../melodee-hdslave`, branch `hdslave`), mounted read-only; set `MELODEE_SCREEN_TREE` to use another. The capture script uses the running Colima `melodee` profile and `melodee-builder` image.
 
 ```sh
 ./build.sh

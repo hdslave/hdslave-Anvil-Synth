@@ -5,7 +5,7 @@ folder=build/melodee-shots
 dest=assets/previews/melodee
 mkdir -p "$folder" "$dest"
 docker --context colima-melodee run --rm --platform linux/arm64 \
-    -v "${MELODEE_SCREEN_TREE:-$PWD/../melodee-hdslave-screen}:/melodee:ro" -v "$PWD:/plug" -w /plug -e HOME=/tmp \
+    -v "${MELODEE_SCREEN_TREE:-$PWD/../melodee-hdslave}:/melodee:ro" -v "$PWD:/plug" -w /plug -e HOME=/tmp \
     melodee-builder sh -c 'MELODEE_PLUGIN_STAGE=/tmp/stage /melodee/build/melodee --melodee-plugin-screen \
     /plug/build/Anvil.clap /plug/build/melodee-shots png:1 wheel:2 push wait:200 png:2 plus wheel:1 \
     push wheel:6 png:3 push plus png:4 plus png:5 plus png:6 plus png:7 plus png:8 shift png:9 shift stage png:10' > "$folder/host.txt"
