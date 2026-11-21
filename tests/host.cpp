@@ -10,6 +10,8 @@
 #include <clap/clap.h>
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -30,7 +32,7 @@ const clap_plugin_entry* entry = nullptr;
 const clap_plugin_factory* factory = nullptr;
 
 // The host side: log, and the two a preset load tells (counted); the plug-in must cope without the rest.
-int rescans = 0, textRescans = 0, callbacks = 0, flushes = 0, paints = 0, presetsLoaded = 0, presetErrors = 0;
+int rescans = 0, textRescans = 0, callbacks = 0, flushes = 0, paints = 0, processRequests = 0, presetsLoaded = 0, presetErrors = 0;
 const void* hostExtension (const clap_host*, const char* id)
 {
     static const clap_host_log log { [] (const clap_host*, clap_log_severity s, const char* m) { std::printf ("  [plug-in log %d] %s\n", (int) s, m); } };
@@ -53,7 +55,7 @@ const void* hostExtension (const clap_host*, const char* id)
 
 clap_host host {
     CLAP_VERSION, nullptr, "Anvil test host", "tests", "", "1",
-    hostExtension, [] (const clap_host*) {}, [] (const clap_host*) {}, [] (const clap_host*) { ++callbacks; },
+    hostExtension, [] (const clap_host*) {}, [] (const clap_host*) { ++processRequests; }, [] (const clap_host*) { ++callbacks; },
 };
 
 // Input events for one process call, in time order.
@@ -1154,8 +1156,15 @@ void testScreen (const std::string& folder)
     CHECK ((knobs() == std::vector<clap_id> { a.id ("Pitch 1"), a.id ("Velocity 1"), a.id ("Cutoff") }));
     CHECK (in (MELODEE_SCREEN_WHEEL, 2));
     CHECK ((knobs() == std::vector<clap_id> { a.id ("Pitch 3"), a.id ("Velocity 3"), a.id ("Cutoff") }));
-    // Push plays step 3 (stopped, nothing else would sound).
+    // Push plays step 3 (stopped, nothing else would sound), and asks the host to run the plug-in. A press the host
+    // kept waiting over half a second (an instrument it put to sleep) is dropped, not played late.
     auto quiet = play (4800, false, 0.0);
+    CHECK (std::all_of (quiet.begin(), quiet.end(), [] (float v) { return v == 0.0f; }));
+    const int processBefore = processRequests;
+    CHECK (in (MELODEE_SCREEN_PUSH, 0));
+    CHECK (processRequests > processBefore);
+    std::this_thread::sleep_for (std::chrono::milliseconds (600));
+    quiet = play (4800, false, 0.0);
     CHECK (std::all_of (quiet.begin(), quiet.end(), [] (float v) { return v == 0.0f; }));
     CHECK (in (MELODEE_SCREEN_PUSH, 0));
     auto hit = play (4800, false, 0.0);
@@ -1167,7 +1176,9 @@ void testScreen (const std::string& folder)
     play (48000 + 6000, true, 0.0);
     CHECK (paints > paintsBefore + 4);
     canvas.playing = true;
+    const int paintsAsked = paints;
     CHECK (paint());
+    CHECK (paints > paintsAsked); // a hit fading: the paint asks for the next one itself
     shot ("steps");
     // VCO: Plus moves to the next group; K1-K3 follow the cursor; Push edits, the wheel changes 1-2 FM Amt, the
     // host hears it after the next block, the engine plays it.
@@ -1175,9 +1186,10 @@ void testScreen (const std::string& folder)
     CHECK ((knobs() == std::vector<clap_id> { a.id ("VCO Decay"), a.id ("1-2 FM Amt"), a.id ("VCO EG > FM 1-2 Amt") }));
     CHECK (in (MELODEE_SCREEN_WHEEL, 1));
     CHECK (in (MELODEE_SCREEN_PUSH, 0));
-    const int flushesBefore = flushes;
+    const int flushesBefore = flushes, rescansBefore = rescans;
     CHECK (in (MELODEE_SCREEN_WHEEL, 16));
     CHECK (flushes > flushesBefore);
+    CHECK (rescans > rescansBefore); // the host reads the value again at once, run or not
     CHECK (std::fabs (a.value ("1-2 FM Amt") - 16.0 / 128.0) < 1e-6);
     OutEvents told;
     play (128, true, 2.25, &told);

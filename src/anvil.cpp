@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <new>
@@ -52,6 +53,7 @@ struct Plugin
     Screen screen { values, stepState };
     std::atomic<uint64_t> outgoing { 0 }, presses { 0 };
     std::atomic<int> audition { -1 };
+    std::atomic<uint64_t> pressedAt { 0 }; // when the page last pressed (steady ms): a press kept waiting is dropped
     std::atomic<bool> screenAnimating { false };
     bool valuesMoved = false; // the host moved a value in this block (audio thread): the page is painted again
     int shownStep = -1;
@@ -60,6 +62,15 @@ struct Plugin
 };
 
 Plugin& of (const clap_plugin* p) { return *static_cast<Plugin*> (p->plugin_data); }
+
+// A steady clock in ms, for the age of the page's presses.
+uint64_t steadyMs()
+{
+    return (uint64_t) std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+// A press on the page acts at the next block. A host may not run a plug-in for a while (Melodee puts a silent
+// instrument to sleep, and nothing but MIDI wakes it): a press older than this is dropped rather than played late.
+constexpr uint64_t pressFreshMs = 500;
 
 TextContext contextOf (const Plugin& p)
 {
@@ -465,19 +476,19 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     uint32_t next = 0;
     for (; next < count && in->get (in, next)->time == 0; ++next)
         handle (p, in->get (in, next), process->out_events);
-    // The screen's buttons (Trigger, Advance) and a step it plays, at the block's first frame.
-    if (p.presses.load (std::memory_order_relaxed) != 0)
+    // The screen's buttons (Trigger, Advance) and a step it plays, at the block's first frame (if they are fresh).
+    if (p.presses.load (std::memory_order_relaxed) != 0 || p.audition.load (std::memory_order_relaxed) >= 0)
     {
         uint64_t rows = p.presses.exchange (0, std::memory_order_acquire);
-        for (uint32_t i = 0; rows != 0; ++i, rows >>= 1)
-            if (rows & 1u)
-                p.engine.press (paramTable[i].id);
-    }
-    if (p.audition.load (std::memory_order_relaxed) >= 0)
-    {
         const int s = p.audition.exchange (-1, std::memory_order_acquire);
-        if (s >= 0)
-            p.engine.playStep (s, 1.0f);
+        if (steadyMs() - p.pressedAt.load (std::memory_order_acquire) <= pressFreshMs)
+        {
+            for (uint32_t i = 0; rows != 0; ++i, rows >>= 1)
+                if (rows & 1u)
+                    p.engine.press (paramTable[i].id);
+            if (s >= 0)
+                p.engine.playStep (s, 1.0f);
+        }
     }
 
     // The host's transport. Without a song position (Melodee always sends one), the sequence counts its own from
@@ -559,7 +570,12 @@ bool screenPaint (const clap_plugin* plugin, const melodee_screen_canvas_t* c)
     const hdui::Host h = hostOf (c);
     p.screen.update (h.nowMs);
     const bool drew = p.screen.paint (h, c->pixels, (int) c->stride, c->whole);
-    p.screenAnimating.store (p.screen.animating (h), std::memory_order_relaxed);
+    const bool moving = p.screen.animating (h);
+    p.screenAnimating.store (moving, std::memory_order_relaxed);
+    // Still moving (a hit fading): the next paint is asked for from here too, not only from process(), which a host
+    // may not be running (Melodee's sleeping instrument).
+    if (moving && p.hostScreen != nullptr)
+        p.hostScreen->request_paint (p.host);
     return drew;
 }
 
@@ -570,10 +586,12 @@ bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
     auto& p = of (plugin);
     hdui::Edits edits;
     const bool used = p.screen.input ((hdui::Key) e->kind, e->value, e->shift, edits);
-    bool changed = false;
+    bool changed = false, pressed = false;
     for (int i = 0; i < edits.count; ++i)
     {
         const auto& edit = edits.list[i];
+        if (edit.press)
+            p.pressedAt.store (steadyMs(), std::memory_order_release), pressed = true;
         if (edit.press && edit.id >= auditionId && edit.id < auditionId + 8)
         {
             p.audition.store ((int) (edit.id - auditionId), std::memory_order_release);
@@ -593,8 +611,19 @@ bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
             changed = true;
         }
     }
-    if (changed && p.hostParams != nullptr && p.hostParams->request_flush != nullptr)
-        p.hostParams->request_flush (p.host);
+    // The host's own copy of the values: read again now (this is a main-thread call), since a host may not run the
+    // plug-in soon enough to hear them from process() (Melodee does not run a sleeping instrument, and its
+    // request_flush waits for the next block). The output events still follow for hosts that record them.
+    if (changed && p.hostParams != nullptr)
+    {
+        if (p.hostParams->rescan != nullptr)
+            p.hostParams->rescan (p.host, CLAP_PARAM_RESCAN_VALUES);
+        if (p.hostParams->request_flush != nullptr)
+            p.hostParams->request_flush (p.host);
+    }
+    // A press, or a value the engine should take: ask to be run (a host that put the plug-in to sleep wakes it).
+    if ((changed || pressed) && p.host != nullptr && p.host->request_process != nullptr)
+        p.host->request_process (p.host);
     if (used && p.hostScreen != nullptr)
         p.hostScreen->request_paint (p.host);
     return used;
