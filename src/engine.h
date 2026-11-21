@@ -153,7 +153,7 @@ struct Oscillator
     }
 
     // As step, for a slave reset by its master `ago` samples before now (ago < 0: no reset this sample).
-    float stepSynced (bool tri, float dt, float ago)
+    [[gnu::always_inline]] float stepSynced (bool tri, float dt, float ago)
     {
         if (ago < 0.0f)
         {
@@ -270,6 +270,11 @@ struct Decimator
 };
 
 // --- Engine -------------------------------------------------------------------------------------------------------
+// A clock less than this many frames away is due now. CLAP gives the song's place in steps of 2^-31 beats, which
+// at 48 kHz is about 1e-5 frames: a clock that falls on a block's first frame could otherwise come a frame late, by
+// how the host's rounding fell for that block, so the sound would depend on the block size.
+constexpr double clockSlack = 1.0e-3;
+
 class Engine
 {
 public:
@@ -371,7 +376,7 @@ public:
                     regrid();
                 const double next = (double) (lastStep + 1) * stepBeats();
                 const double ahead = (next - position) / perFrame;
-                if (ahead <= 1.0e-6)
+                if (ahead <= clockSlack)
                 {
                     // A step starts on this frame: the sequence moves on and plays it (with Run off it holds where
                     // it is and stays silent, as the panel's sequencer does when stopped).
@@ -383,7 +388,7 @@ public:
                     }
                     continue;
                 }
-                const double untilStep = std::ceil (ahead - 1.0e-6);
+                const double untilStep = std::ceil (ahead - clockSlack);
                 if (untilStep < (double) run)
                     run = (uint32_t) untilStep;
             }
@@ -554,7 +559,7 @@ private:
         }
     }
 
-    float voice()
+    [[gnu::always_inline]] float voice()
     {
         const float eVco = vcoEg.next(), eVcf = vcfEg.next();
         if (vcaEg.idle())

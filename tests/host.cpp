@@ -515,8 +515,8 @@ void testStopRestartJump()
     // block, as when a loop wraps between two blocks) plays that step at once.
     Instance b;
     b.setup (clickPatch (b));
-    const uint64_t jump = 128 * 100; // a block boundary
-    b.render (48000 * 2, 128, l, r, [jump] (uint64_t at) {
+    constexpr uint64_t jump = 128 * 100; // a block boundary
+    b.render (48000 * 2, 128, l, r, [] (uint64_t at) {
         if (at < jump) return playingFrom (0.0, 120.0, 48000.0, at);
         return playingFrom (3.3, 120.0, 48000.0, at - jump); // the next step starts at beat 3.5: 0.2 beat on
     });
@@ -527,8 +527,8 @@ void testStopRestartJump()
 
     Instance c;
     c.setup (clickPatch (c));
-    const uint64_t wrap = 128 * 40;
-    c.render (48000, 128, l, r, [wrap] (uint64_t at) {
+    constexpr uint64_t wrap = 128 * 40;
+    c.render (48000, 128, l, r, [] (uint64_t at) {
         if (at < wrap) return playingFrom (1.0, 120.0, 48000.0, at);
         return playingFrom (100.0 / 24000.0, 120.0, 48000.0, at - wrap); // 100 frames past the top
     });

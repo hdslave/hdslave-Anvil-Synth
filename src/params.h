@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.2.0"
+#define ANVIL_VERSION "0.2.1"
 #endif
 
 namespace anvil
@@ -97,7 +97,7 @@ using P = Param;
 
 // In the order a host lists them: a panel section to each three, as Melodee's Edit page shows them (the VCO EG and
 // what it does to FM; VCO 1; VCO 2; the switches; the mixer; the filter twice; the VCA; then the sequencer).
-inline const Param paramTable[] = {
+inline constexpr Param paramTable[] = {
     CONT (vcoDecay, "VCO Decay", "VCO", 0.0f, 1.0f, 0.35f, decay),
     CONT (fmAmt, "1-2 FM Amt", "VCO", 0.0f, 1.0f, 0.0f, percent),
     CONT (egFmAmt, "VCO EG > FM 1-2 Amt", "VCO", -1.0f, 1.0f, 0.0f, bipolar),

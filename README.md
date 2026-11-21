@@ -110,11 +110,13 @@ Instructions a 128-frame block takes, from `tools/bench.sh` (callgrind):
 
 | Case | Instructions | Share of one A55 core at 1 instruction a cycle |
 |---|---|---|
-| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 105,000 | 2.2 % |
-| A short percussive pattern | about 98,000 | 2.1 % |
-| Stopped | under 900 | 0.02 % |
+| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 83,000 | 1.7 % |
+| A short percussive pattern | about 77,000 | 1.6 % |
+| Stopped | under 1,000 | 0.02 % |
 
-While the VCA is closed between hits the oscillators and filter are skipped. The real share on the MPC depends on
+While the VCA is closed between hits the oscillators and filter are skipped. The voice's two samples a frame, and the
+synced oscillator's step, are compiled into the frame's loop rather than called (a fifth fewer instructions than
+before, the same output to the bit). The real share on the MPC depends on
 how many instructions the A55 retires a cycle on this code; measure it with Melodee's plug-in load figure.
 
 ## Build and test
@@ -122,7 +124,7 @@ how many instructions the A55 retires a cycle on this code; measure it with Melo
 Needs Docker with a Linux arm64 context (Melodee's `colima-melodee` and its `melodee-builder` image by default).
 
 ```sh
-./build.sh          # build/Anvil.clap, then the tests (tests/host.cpp) and demo renders build/demo-*.wav
+./build.sh          # build/Anvil.clap, then the tests (tests/host.cpp), the sound's fingerprint and demo renders build/demo-*.wav
 ./build.sh bench    # build/bench
 tools/bench.sh      # instruction counts (Melodee's melodee-profiler image)
 ```
@@ -132,6 +134,12 @@ default; state save and load; the presets as preset discovery lists them and pre
 a loop wrapping inside a block, a host without a song position; the same output whatever the block size (1, 37,
 128, 4096 frames); Trigger, Advance, Run and MIDI notes; velocity and tails; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
+
+`tests/fingerprint.cpp` then renders 37 fixed scenarios (each preset, the bench's patches, 24 random patches with the
+buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps) and hashes every output sample's bits
+against `tests/fingerprint.txt`: work meant to keep the sound, such as a speed-up, must leave every hash as it is. A
+change meant to change the sound updates them with `make fingerprint-update` (run inside the build image). The
+hashes hold for Melodee's build image and these compiler flags.
 
 ## Install
 

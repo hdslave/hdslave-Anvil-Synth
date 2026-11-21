@@ -379,6 +379,14 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
             p.applied[i] = v, p.engine.set (paramTable[i].id, v);
     }
 
+    // Events at the block's first frame come first, the transport after them: a setting the host sends with Play is
+    // in place for what Play does (the sequencer's reset at Play, its first step).
+    const auto* in = process->in_events;
+    const uint32_t count = in != nullptr ? in->size (in) : 0;
+    uint32_t next = 0;
+    for (; next < count && in->get (in, next)->time == 0; ++next)
+        handle (p, in->get (in, next), process->out_events);
+
     // The host's transport. Without a song position (Melodee always sends one), the sequence counts its own from
     // Play, so the first step is the one Play lands on.
     if (const auto* t = process->transport)
@@ -392,9 +400,7 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     else
         p.engine.transport (false, 0.0, 120.0, frames);
 
-    const auto* in = process->in_events;
-    const uint32_t count = in != nullptr ? in->size (in) : 0;
-    uint32_t done = 0, next = 0;
+    uint32_t done = 0;
     while (done < frames)
     {
         // Every event due by now, then sound up to the next one.
