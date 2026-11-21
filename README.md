@@ -18,7 +18,9 @@ VCO 1 + noise (white/pink) + VCO 2 ──► mixer (clips when hot)
   ──► 4-pole ladder, LP or HP (cutoff moved by VCF EG and by noise) ──► VCA (VCA EG) ──► Volume ──► out (stereo)
 ```
 
-Every step triggers all three envelopes at its velocity. A softer step does not cut a louder tail still falling.
+Every step triggers all three envelopes at its velocity. A softer step does not cut a louder tail still falling,
+nor a louder step's attack still rising (the slow VCA attack under a fast pattern, or a Trigger on a step's frame):
+the louder step reaches its full peak.
 
 On the MPC it draws its own page on the screen (see [The screen](#the-screen)).
 
@@ -185,7 +187,9 @@ Quantize (each scale's note from the pitch heard; the Pitch texts by it, and the
 screen's page (it draws, picks and plays a step, its controls set the values the host then hears, its buttons press;
 pictures in `build/screen-*.png`);
 Ratchet (three hits a step, evenly spaced); the patch routings (each the same sound as turning Cutoff as far, from the
-second step; at 0 they change nothing; VCF EG > VCO 2 bending VCO 2); velocity and tails; VCO pitch, step pitch on each Seq Pitch
+second step; at 0 they change nothing; VCF EG > VCO 2 bending VCO 2); velocity and tails; a softer step or note in a
+louder one's attack (on its frame, half a millisecond later, and inside the slow VCA attack at 1/32) leaving its
+peak, to the bit; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
 
 `tests/fingerprint.cpp` then renders 60 fixed scenarios (each preset, the bench's patches, 24 random patches with the

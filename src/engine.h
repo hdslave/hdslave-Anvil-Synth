@@ -60,7 +60,8 @@ inline float onePoleGain (float x)
 // --- Envelope ---------------------------------------------------------------------------------------------------
 // The panel's EGs: a trigger charges the envelope from wherever it is toward the step's velocity (its peak), as a
 // capacitor through a resistor would (aimed past the peak and stopped at it), then it decays exponentially. A step
-// softer than where a tail still is does not cut it: the tail goes on falling, as on the hardware.
+// softer than where a tail still is does not cut it: the tail goes on falling, as on the hardware. Nor does a softer
+// step cut a louder one's attack: the charge goes on to the louder peak.
 struct Envelope
 {
     float value = 0.0f;
@@ -71,8 +72,8 @@ struct Envelope
 
     void trigger (float level)
     {
-        peak = level;
-        attacking = level > value;
+        peak = attacking ? std::max (peak, level) : level;
+        attacking = peak > value;
     }
     bool idle() const { return ! attacking && value == 0.0f; }
     float next()

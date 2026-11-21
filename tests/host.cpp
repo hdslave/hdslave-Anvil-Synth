@@ -1,7 +1,7 @@
 // Loads Anvil.clap as a host does and checks it: description and ports, parameters, state, presets, the sequencer against
 // the host's transport (timing to the sample, stop, restart, jumps, a loop that wraps inside a block), the same
-// output whatever the block size, the buttons, MIDI triggering and bounded output at extreme settings. Writes demo
-// renders as WAV files into the output folder.
+// output whatever the block size, the buttons, MIDI triggering, a softer step in a louder one's attack and bounded
+// output at extreme settings. Writes demo renders as WAV files into the output folder.
 //   host Anvil.clap OUT_FOLDER
 #include "wav.h"
 #include "png.h"
@@ -1019,6 +1019,71 @@ void testVelocity()
     CHECK (later < after * 1.05);                                             // step 3 (0.1): below the tail, no rise
 }
 
+// A softer step while a louder one is still rising does not cut its attack: the hit sounds to the bit as the louder
+// one alone until its peak (the softer step's shorter decay then takes over), and as loud.
+void testSofterStepInAttack()
+{
+    std::vector<float> l, r, alone;
+    auto patch = [] (Instance& a, const char* vcaEg) {
+        auto p = clickPatch (a);
+        p.push_back ({ "VCA EG", a.valueOf ("VCA EG", vcaEg) });
+        p.push_back ({ "VCA Decay", 0.5 }); // 316 ms: the level at the peak is the hit's loudest
+        return p;
+    };
+    auto firstDifference = [] (const std::vector<float>& a, const std::vector<float>& b) {
+        long i = 0;
+        while (i < (long) a.size() && i < (long) b.size() && a[(size_t) i] == b[(size_t) i])
+            ++i;
+        return i;
+    };
+    auto loudest = [] (const std::vector<float>& x) {
+        float m = 0.0f;
+        for (float s : x)
+            m = std::max (m, std::fabs (s));
+        return m;
+    };
+    // Notes: Steps, stopped: step 1 at velocity 1, then at 0.4 on the same frame (a host that gives a block's notes
+    // all on its first frame) or half a millisecond later (24 frames: the first one's 1 ms attack half done).
+    auto notes = [&] (std::vector<std::pair<uint64_t, double>> list, std::vector<float>& out) {
+        Instance a;
+        auto p = patch (a, "Fast");
+        p.push_back ({ "Notes", a.valueOf ("Notes", "Steps") });
+        a.setup (p);
+        a.render (12000, 128, out, r, [] (uint64_t) { return Transport { false, 120.0, 0.0 }; }, [&] (uint64_t at, uint32_t n, Events& e) {
+            for (auto& [when, velocity] : list)
+                if (when >= at && when < at + n)
+                    e.note ((uint32_t) (when - at), CLAP_EVENT_NOTE_ON, 36, velocity);
+        });
+    };
+    notes ({ { 1280, 1.0 } }, alone);
+    CHECK (firstDifference (alone, std::vector<float> (alone.size(), 0.0f)) >= 1280 && loudest (alone) > 0.3f);
+    for (uint64_t later : { 0, 24 })
+    {
+        notes ({ { 1280, 1.0 }, { 1280 + later, 0.4 } }, l);
+        if (std::getenv ("ANVIL_DEBUG"))
+            std::printf ("debug softer note %llu frames later: same until %ld, loudest %.4f of %.4f\n", (unsigned long long) later,
+                         firstDifference (l, alone), loudest (l), loudest (alone));
+        CHECK (firstDifference (l, alone) >= 1280 + 47 && loudest (l) > loudest (alone) * 0.999f);
+    }
+    // VCA EG Slow (100 ms to the peak) at 1/32 (62.5 ms a step at 120 BPM): step 1 at velocity 1, step 2 at 0.6 while
+    // step 1 still rises. Step 1 reaches its full peak, as with both steps at 1.
+    auto steps = [&] (double second, std::vector<float>& out) {
+        Instance a;
+        auto p = patch (a, "Slow");
+        p.push_back ({ "Clock Div", a.valueOf ("Clock Div", "1/32") });
+        p.push_back ({ "Length", 2 });
+        p.push_back ({ "Velocity 1", 1.0 });
+        p.push_back ({ "Velocity 2", second });
+        a.setup (p);
+        a.render (6000, 128, out, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+    };
+    steps (1.0, alone);
+    steps (0.6, l);
+    if (std::getenv ("ANVIL_DEBUG"))
+        std::printf ("debug slow attack, a softer step 2: same until %ld, loudest %.4f of %.4f\n", firstDifference (l, alone), loudest (l), loudest (alone));
+    CHECK (firstDifference (l, alone) >= 4750 && loudest (l) > loudest (alone) * 0.999f);
+}
+
 // Rising zero crossings (with a little hysteresis) in [from, to): the frequency of a clean wave, times the window.
 long crossings (const std::vector<float>& x, size_t from, size_t to, float hysteresis = 0.002f)
 {
@@ -1376,6 +1441,7 @@ int main (int argc, char** argv)
     testChanceAndRatchet();
     testPatchRoutings();
     testVelocity();
+    testSofterStepInAttack();
     testPitchAndFm();
     testQuantize();
     testScreen (argv[2]);
