@@ -56,3 +56,5 @@ direction-random ed308f88610fdd8d
 patch-routings 173b2ca708f70a61
 notes-steps-playing 71fef5944e0dd03d
 notes-steps-stopped 7fbb1ede34a751a5
+loop-wrap-128 46bfdd79b109acb9
+loop-wrap-32 46bfdd79b109acb9

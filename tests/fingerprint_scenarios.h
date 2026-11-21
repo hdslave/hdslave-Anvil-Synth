@@ -1,6 +1,8 @@
 // Anvil's fingerprint scenarios (tests/fingerprint.cpp).
 #pragma once
 
+#include <cmath>
+
 namespace
 {
 // The parameters of Anvil 0.2, in its table's order: the random scenarios draw for these.
@@ -119,6 +121,22 @@ std::vector<Scenario> scenarios()
             s.events.push_back ({ (uint64_t) (4000 + i * 15000), Event::noteOn, "", (double) (36 + (i * 5) % 9) });
         if (! playing)
             s.transport = [] (uint64_t, double, double) -> std::pair<bool, double> { return { false, 0.0 }; };
+        list.push_back (s);
+    }
+    // A 4-beat loop at 110 BPM wrapping inside a block, told at the next block as Melodee does, in whole blocks and in
+    // parts of 32 frames (the place told only at each 128).
+    for (uint32_t part : { 128u, 32u })
+    {
+        Scenario s;
+        s.name = "loop-wrap-" + std::to_string (part);
+        s.preset = "fm-perc";
+        s.values = { { "Chance", 0.8 } };
+        s.bpm = 110.0, s.seconds = 10.0, s.block = part;
+        s.transport = [] (uint64_t at, double bpm, double rate) -> std::pair<bool, double> {
+            const uint64_t block = at / 128 * 128;
+            const double perFrame = bpm / 60.0 / rate;
+            return { true, std::fmod ((double) block * perFrame, 4.0) + (double) (at - block) * perFrame };
+        };
         list.push_back (s);
     }
     return list;

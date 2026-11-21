@@ -84,11 +84,13 @@ struct Events
 struct OutEvents
 {
     std::vector<std::pair<clap_id, double>> values;
+    std::vector<uint32_t> times; // each value's frame in its block
     clap_output_events out { this, [] (const clap_output_events* o, const clap_event_header* h) {
         if (h->space_id == CLAP_CORE_EVENT_SPACE_ID && h->type == CLAP_EVENT_PARAM_VALUE)
         {
             const auto* v = reinterpret_cast<const clap_event_param_value*> (h);
             static_cast<OutEvents*> (o->ctx)->values.push_back ({ v->param_id, v->value });
+            static_cast<OutEvents*> (o->ctx)->times.push_back (h->time);
         }
         return true;
     } };
@@ -555,6 +557,113 @@ void testStopRestartJump()
     CHECK (hits.size() == 8);
     for (size_t i = 1; i < hits.size(); ++i)
         CHECK (std::labs (hits[i] - hits[1] - (long) (i - 1) * 12000) <= 2);
+}
+
+// The clocks (0-based) a run's hits fell on, `clockFrames` apart.
+std::vector<long> clocksOf (const std::vector<long>& hits, long clockFrames)
+{
+    std::vector<long> out;
+    for (long h : hits)
+        out.push_back ((h + clockFrames / 4) / clockFrames);
+    return out;
+}
+double energy (const std::vector<float>& l, long from, long n)
+{
+    double e = 0.0;
+    for (long i = from; i < from + n && i < (long) l.size(); ++i)
+        e += (double) l[(size_t) i] * l[(size_t) i];
+    return e;
+}
+// The click patch with every step at full velocity, at sixteenths: each hit alike, so one hit's energy is another's.
+std::vector<std::pair<std::string, double>> evenClicks (Instance& a)
+{
+    auto p = clickPatch (a);
+    for (int i = 1; i <= 8; ++i)
+        p.push_back ({ "Velocity " + std::to_string (i), 1.0 });
+    p.push_back ({ "Clock Div", a.valueOf ("Clock Div", "1/16") });
+    return p;
+}
+
+void testLoopsAndClockChanges()
+{
+    std::vector<float> l, r;
+    // A 4-beat loop at 110 BPM whose end falls inside a block (frame 104,727.3), the host telling of the wrap only at
+    // the next block as Melodee does: the steps run on to the loop's end, which is its start. The downbeat is one
+    // hit, not the loop's end and then the loop's start again 105 frames later: its energy is the hit before's.
+    constexpr double perFrame = 110.0 / 60.0 / 48000.0, loopEnd = 4.0 / perFrame, step = 0.25 / perFrame;
+    {
+        Instance a;
+        a.setup (evenClicks (a));
+        a.render ((uint32_t) loopEnd + 24000, 128, l, r, [] (uint64_t at) { return Transport { true, 110.0, std::fmod ((double) at * perFrame, 4.0) }; });
+        const double before = energy (l, (long) (loopEnd - step), 2000), down = energy (l, (long) loopEnd, 2000);
+        if (std::getenv ("ANVIL_DEBUG")) std::printf ("debug wrap energy: %.4f then %.4f\n", before, down);
+        CHECK (before > 0.0 && down < before * 1.15 && down > before * 0.85);
+        const auto hits = onsets (l);
+        CHECK (std::count_if (hits.begin(), hits.end(), [&] (long h) { return h > loopEnd - 100 && h < loopEnd + step - 100; }) == 1);
+    }
+    // A 2-beat loop with Chance 75 %: the step at the loop's end (the 8th clock) stays silent, the downbeat (clock 0)
+    // sounds. Told a block late, the downbeat still plays, at most a block late, also when the host's blocks come in
+    // parts smaller than that (Melodee plays a plug-in in parts between its steps and tells the place only at its own
+    // blocks of 128).
+    for (uint32_t part : { 128u, 32u })
+    {
+        constexpr double loop2 = 2.0 / perFrame;
+        Instance a;
+        auto p = evenClicks (a);
+        p.push_back ({ "Chance", 0.75 });
+        a.setup (p);
+        a.render ((uint32_t) loop2 + 12000, part, l, r, [] (uint64_t at) {
+            const uint64_t block = at / 128 * 128; // Melodee's block: the place at its start, counted on through it
+            return Transport { true, 110.0, std::fmod ((double) block * perFrame, 2.0) + (double) (at - block) * perFrame };
+        });
+        const auto hits = onsets (l);
+        const auto down = std::find_if (hits.begin(), hits.end(), [&] (long h) { return h > loop2 - 100; });
+        if (std::getenv ("ANVIL_DEBUG")) std::printf ("debug wrap part %u: %ld\n", part, down == hits.end() ? -1L : *down);
+        CHECK (down != hits.end() && *down >= (long) loop2 && *down < (long) loop2 + 128 + 60);
+    }
+    // Drift: a tempo change inside a block (120 to 125 BPM, 64 frames before the next block) moves the host's place a
+    // few frames from where the steps counted: the step played 64 frames ago is not played again, the next comes at
+    // the new tempo.
+    {
+        Instance a;
+        a.setup (evenClicks (a));
+        a.render (48000, 128, l, r, [] (uint64_t at) {
+            if (at < 24064) return playingFrom (0.0, 120.0, 48000.0, at);
+            return Transport { true, 125.0, 1.0 + (double) (at - 24000) * 125.0 / 60.0 / 48000.0 };
+        });
+        CHECK (energy (l, 24000, 2000) < energy (l, 18000, 2000) * 1.15);
+        const auto hits = onsets (l);
+        CHECK (std::find_if (hits.begin(), hits.end(), [] (long h) { return h >= 24000 + 5760 && h < 24000 + 5760 + 48; }) != hits.end());
+    }
+    // Clock Div changed on a downbeat while playing (1/16 to 1/8 at beat 2): that downbeat still plays.
+    {
+        Instance a;
+        a.setup (evenClicks (a));
+        a.render (96000, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); }, [&] (uint64_t at, uint32_t, Events& e) {
+            if (at == 48000) a.set (e, "Clock Div", a.valueOf ("Clock Div", "1/8"));
+        });
+        const auto got = clocksOf (onsets (l), 6000);
+        if (std::getenv ("ANVIL_DEBUG")) { std::printf ("debug regrid:"); for (long c : got) std::printf (" %ld", c); std::printf ("\n"); }
+        CHECK ((got == std::vector<long> { 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14 }));
+    }
+    // A flush while active (the host's way between process calls) takes a button too: Trigger plays, and returns to 0.
+    // A press stamped past its block (a host's mistake) is answered inside the block.
+    {
+        Instance a;
+        a.setup (clickPatch (a));
+        Events e;
+        e.param (0, a.id ("Trigger"), 1.0);
+        OutEvents out;
+        a.params->flush (a.plugin, &e.in, &out.out);
+        CHECK ((out.values == std::vector<std::pair<clap_id, double>> { { a.id ("Trigger"), 0.0 } }));
+        OutEvents late;
+        a.render (12000, 128, l, r, [] (uint64_t) { return Transport { false, 120.0, 0.0 }; }, [&] (uint64_t at, uint32_t, Events& ev) {
+            if (at == 128 * 50) ev.param (135, a.id ("Trigger"), 1.0);
+        }, &late);
+        const auto hits = onsets (l);
+        CHECK (! hits.empty() && hits[0] < 48);
+        CHECK (late.times.size() == 1 && late.times[0] <= 127);
+    }
 }
 
 void testBlockSizes()
@@ -1250,6 +1359,7 @@ int main (int argc, char** argv)
     testPresets();
     testTiming();
     testStopRestartJump();
+    testLoopsAndClockChanges();
     testBlockSizes();
     testButtonsAndNotes();
     testLengthAndSwing();

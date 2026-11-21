@@ -21,7 +21,7 @@ namespace anvil
 namespace
 {
 const char* const features[] = { CLAP_PLUGIN_FEATURE_INSTRUMENT, CLAP_PLUGIN_FEATURE_SYNTHESIZER, CLAP_PLUGIN_FEATURE_DRUM,
-                                 CLAP_PLUGIN_FEATURE_MONO, nullptr };
+                                 CLAP_PLUGIN_FEATURE_STEREO, nullptr };
 
 const clap_plugin_descriptor descriptor {
     CLAP_VERSION, "com.hdslave.anvil", "hdslave Anvil", "hdslave", "", "", "", ANVIL_VERSION,
@@ -159,8 +159,9 @@ bool paramsFromText (const clap_plugin*, clap_id id, const char* text, double* v
     return true;
 }
 
-// One event: parameter values go to the engine at once; notes trigger it. True if it was ours.
-void handle (Plugin& p, const clap_event_header* e, const clap_output_events* out)
+// One event: parameter values go to the engine at once; notes trigger it. A button's release is sent back stamped no
+// later than `lastFrame` (an event stamped past the block is applied at its end).
+void handle (Plugin& p, const clap_event_header* e, const clap_output_events* out, uint32_t lastFrame)
 {
     if (e->space_id != CLAP_CORE_EVENT_SPACE_ID)
         return;
@@ -183,7 +184,7 @@ void handle (Plugin& p, const clap_event_header* e, const clap_output_events* ou
                     if (out != nullptr)
                     {
                         clap_event_param_value back {};
-                        back.header = { sizeof (back), e->time, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0 };
+                        back.header = { sizeof (back), std::min (e->time, lastFrame), CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0 };
                         back.param_id = info.id;
                         back.note_id = back.port_index = back.channel = back.key = -1;
                         back.value = 0.0;
@@ -228,7 +229,19 @@ void paramsFlush (const clap_plugin* plugin, const clap_input_events* in, const 
     for (uint32_t i = 0; i < count; ++i)
     {
         const auto* e = in->get (in, i);
-        // Outside process the engine is not running: only values are kept (buttons do nothing).
+        // Active, a flush comes on the audio thread in place of a process call: the engine takes it as it would
+        // there (buttons too).
+        if (p.active)
+        {
+            if (e->space_id == CLAP_CORE_EVENT_SPACE_ID && e->type == CLAP_EVENT_PARAM_VALUE)
+            {
+                handle (p, e, out, 0);
+                if (p.hostScreen != nullptr)
+                    p.hostScreen->request_paint (p.host);
+            }
+            continue;
+        }
+        // Not active, the engine is not running: only values are kept (buttons do nothing).
         if (e->space_id == CLAP_CORE_EVENT_SPACE_ID && e->type == CLAP_EVENT_PARAM_VALUE)
         {
             const auto* v = reinterpret_cast<const clap_event_param_value*> (e);
@@ -474,8 +487,9 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     const auto* in = process->in_events;
     const uint32_t count = in != nullptr ? in->size (in) : 0;
     uint32_t next = 0;
+    const uint32_t lastFrame = frames > 0 ? frames - 1 : 0;
     for (; next < count && in->get (in, next)->time == 0; ++next)
-        handle (p, in->get (in, next), process->out_events);
+        handle (p, in->get (in, next), process->out_events, lastFrame);
     // The screen's buttons (Trigger, Advance) and a step it plays, at the block's first frame (if they are fresh).
     if (p.presses.load (std::memory_order_relaxed) != 0 || p.audition.load (std::memory_order_relaxed) >= 0)
     {
@@ -513,7 +527,7 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
             const auto* e = in->get (in, next);
             if (e->time > done)
                 break;
-            handle (p, e, process->out_events);
+            handle (p, e, process->out_events, lastFrame);
             ++next;
         }
         uint32_t until = frames;
@@ -523,7 +537,7 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
         done = until;
     }
     for (; next < count; ++next) // events stamped past the block (a host's mistake): applied at its end
-        handle (p, in->get (in, next), process->out_events);
+        handle (p, in->get (in, next), process->out_events, lastFrame);
     // The screen: where the sequence is and whether it hit; a paint when that changed or a hit is still fading.
     if (p.hostScreen != nullptr)
     {

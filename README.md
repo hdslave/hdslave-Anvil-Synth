@@ -117,8 +117,16 @@ page.
   one later by Swing). Play from the top starts on step 1, on its first frame; each later step lands on its frame. A
   Play or a jump places the sequence by the song's place: the clock's number from the top, counted round Length.
 - Stop stops the sequence (sounds ring out). Play again starts from where the song is.
-- A jump, or a loop going round, lines the sequence up with the song's place again. A wrap that falls inside a block
-  still plays that step, at the start of the next block (at most a block late: 2.7 ms at 128 frames).
+- A jump, or a loop going round, lines the sequence up with the song's place again. A Play or jump landing just past a
+  step's start (within a block) plays that step at once.
+- A loop that wraps inside a block is told only at the next block (Melodee tells the song's place at its own blocks,
+  even when it plays a plug-in in smaller parts), so the steps run on to the loop's end, which is its start: the step
+  played there stands for the downbeat. When the host tells, the sequence lines up with the song and goes on from
+  there, and the downbeat is not played twice; one the loop's end left silent (Chance) plays then, at most a block
+  late (2.7 ms at 128 frames).
+- A tempo change inside a block moves the host's place a few frames from where the steps counted: followed as it is,
+  no step played twice, a step passed played at once.
+- Clock Div changed while playing: the steps count on the new grid from there; one due on that frame plays.
 - Run off: the host plays but the sequence holds its step and stays silent; Advance and Trigger work as on the panel.
   Run on again plays the step it is on at once and goes on from there.
 - In Melodee, keep the plug-in's **TRANSPORT** on (the default): with it off the plug-in never hears Play.
@@ -166,7 +174,10 @@ tools/bench.sh      # instruction counts (Melodee's melodee-profiler image)
 
 The tests load the plug-in through the CLAP API and check: description and ports; every parameter's range, text and
 default; state save and load; the presets as preset discovery lists them and preset-load loads them; step timing to the frame at 44.1, 48 and 96 kHz and two tempos; stop, restart, jumps,
-a loop wrapping inside a block, a host without a song position; the same output whatever the block size (1, 37,
+a host without a song position; a loop wrapping inside a block and told a block late (one hit on the downbeat, not
+two; a downbeat the loop's end left silent still played, in whole blocks and in Melodee's smaller parts), a tempo
+change inside a block, Clock Div changed on a downbeat, a button pressed through a flush and one stamped past its
+block; the same output whatever the block size (1, 37,
 128, 4096 frames); Trigger, Advance, Run and MIDI notes; Length (a cycle of 3, Advance wrapping in it) and Swing (66 and
 75 %, and a jump between a step's grid line and its late clock); Notes: Steps (notes 36 to 39 and 44, a softer note);
 each Direction (the order read back from the steps' levels; Random the same twice); Chance (0 %, 50 % the same twice);
@@ -177,9 +188,10 @@ Ratchet (three hits a step, evenly spaced); the patch routings (each the same so
 second step; at 0 they change nothing; VCF EG > VCO 2 bending VCO 2); velocity and tails; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
 
-`tests/fingerprint.cpp` then renders 58 fixed scenarios (each preset, the bench's patches, 24 random patches with the
+`tests/fingerprint.cpp` then renders 60 fixed scenarios (each preset, the bench's patches, 24 random patches with the
 buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps, Length and Swing, each Direction with
-Chance and Ratchet, the patch routings, notes playing steps) and hashes every output sample's bits
+Chance and Ratchet, the patch routings, notes playing steps, a loop wrapping inside a block in whole blocks and in
+parts) and hashes every output sample's bits
 against `tests/fingerprint.txt`: work meant to keep the sound, such as a speed-up, must leave every hash as it is. A
 change meant to change the sound updates them with `make fingerprint-update` (run inside the build image). The
 hashes hold for Melodee's build image and these compiler flags.

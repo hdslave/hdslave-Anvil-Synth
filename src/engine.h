@@ -258,7 +258,7 @@ struct Decimator
         constexpr int len = 2 * half;
         odd[at] = odd[at + len] = b;
         even[evenAt] = a;
-        quiet = (a == 0.0f && b == 0.0f) ? quiet + 1 : 0;
+        quiet = (a == 0.0f && b == 0.0f) ? std::min (quiet + 1, 2 * half + 1) : 0; // held at silent(): never overflows
         const float* w = odd + at + 1; // w[0] .. w[len-1]: b[m-len+1] .. b[m]
         float sum = 0.0f;
         for (int i = 0; i < half; ++i)
@@ -307,6 +307,8 @@ public:
         stepIndex = 0;
         travel = 0;
         now = 0;
+        clockedAt = -(int64_t (1) << 40); // no clock played yet
+        clockedLoud = false;
         ratchetsLeft = 0;
         dirty = true;
         retarget();
@@ -378,9 +380,14 @@ public:
             playing = false;
             return;
         }
-        // A Play, or a place other than where the last block ended (a jump, a loop going round): line up again.
-        if (! playing || std::fabs (beats - position) > 0.5 * perFrame)
-            relocate (beats, window);
+        // A Play, or a place other than where the last block ended by more than a block (a jump, a loop going
+        // round): line up again. Less than that is drift (a tempo change inside the last block), followed as it is:
+        // the steps already played are not played again, one passed is played at once.
+        const double moved = std::fabs (beats - position);
+        if (! playing)
+            relocate (beats, window, false);
+        else if (moved > 0.5 * perFrame && moved >= window * perFrame)
+            relocate (beats, window, true);
         playing = true;
         position = beats;
     }
@@ -416,28 +423,8 @@ public:
                 const double ahead = (next - position) / perFrame;
                 if (ahead <= clockSlack)
                 {
-                    // A step starts on this frame: the sequence moves on and plays it (with Run off it holds where
-                    // it is and stays silent, as the panel's sequencer does when stopped).
                     ++lastStep;
-                    ratchetsLeft = 0;
-                    if (knob[ParamId::run] >= 0.5f)
-                    {
-                        advanceTo (lastStep);
-                        // Chance: whether this clock's step sounds, the same for the same place in the song.
-                        if (knob[ParamId::chance] >= 1.0f || unit (lastStep, 0x5bd1e995u) < knob[ParamId::chance])
-                        {
-                            fire();
-                            const int hits = (int) knob[ParamId::ratchet];
-                            if (hits > 1)
-                            {
-                                ratchetCount = hits;
-                                ratchetsLeft = hits - 1;
-                                ratchetFrom = now;
-                                ratchetGap = (clockBeat (lastStep + 1) - clockBeat (lastStep)) / perFrame / hits;
-                                ratchetNext = ratchetFrom + (uint64_t) std::llround (ratchetGap);
-                            }
-                        }
-                    }
+                    clock (lastStep);
                     continue;
                 }
                 const double untilStep = std::ceil (ahead - clockSlack);
@@ -516,23 +503,66 @@ private:
         return beats / grid + 1.0e-9 < clockBeat (b) / grid ? b - 1 : b; // between the grid line and the late clock
     }
 
-    void relocate (double beats, double window)
+    // A step starts on this frame (clock k): the sequence moves on and plays it (with Run off it holds where it is and
+    // stays silent, as the panel's sequencer does when stopped).
+    void clock (int64_t k)
     {
-        const int64_t b = clockAtOrBefore (beats);
-        // Just past a step's start (less than a block: a loop's wrap inside the last block, a Play landing a hair
-        // late): that step plays at once; further in, the next step is the first.
-        const double late = (beats - clockBeat (b)) / perFrame;
-        lastStep = b - (late < window ? 1 : 0);
-        position = beats;
-        if (knob[ParamId::run] >= 0.5f) // stopped by Run, the sequence holds its step through the host's moves
-            aligned = false;
-        regridWanted = false;
+        ratchetsLeft = 0;
+        clockedAt = (int64_t) now, clockedLoud = false;
+        if (knob[ParamId::run] < 0.5f)
+            return;
+        advanceTo (k);
+        // Chance: whether this clock's step sounds, the same for the same place in the song.
+        if (knob[ParamId::chance] >= 1.0f || unit (k, 0x5bd1e995u) < knob[ParamId::chance])
+        {
+            fire();
+            clockedLoud = true;
+            const int hits = (int) knob[ParamId::ratchet];
+            if (hits > 1)
+            {
+                ratchetCount = hits;
+                ratchetsLeft = hits - 1;
+                ratchetFrom = now;
+                ratchetGap = (clockBeat (k + 1) - clockBeat (k)) / perFrame / hits;
+                ratchetNext = ratchetFrom + (uint64_t) std::llround (ratchetGap);
+            }
+        }
     }
 
-    // Clock Div changed: count steps on the new grid from here, without a burst of them.
+    void relocate (double beats, double window, bool jumped)
+    {
+        const int64_t b = clockAtOrBefore (beats);
+        const double late = (beats - clockBeat (b)) / perFrame; // frames since the host's step b began
+        position = beats;
+        regridWanted = false;
+        // A jump whose step b began on the very frame a step played here: a loop gone round inside a block (the host
+        // tells only at the next one, so the steps ran on past the loop's end; its end is its start). That step was
+        // b: the sequence lines up with b and goes on from it, and b is not played again, unless the step played
+        // then stayed silent (Chance) and b sounds.
+        if (jumped && std::fabs ((double) ((int64_t) now - clockedAt) - late) <= 2.0)
+        {
+            lastStep = b;
+            if (knob[ParamId::run] < 0.5f)
+                return;
+            aligned = false;
+            if (clockedLoud)
+                advanceTo (b); // the hit sounding goes on as it is
+            else
+                clock (b);
+            return;
+        }
+        // Just past a step's start (less than a block: a Play landing a hair late, a wrap seen early enough): that
+        // step plays at once; further in, the next step is the first.
+        lastStep = b - (late < window ? 1 : 0);
+        if (knob[ParamId::run] >= 0.5f) // stopped by Run, the sequence holds its step through the host's moves
+            aligned = false;
+    }
+
+    // Clock Div changed: count steps on the new grid from here, without a burst of them. A step of the new grid due on
+    // this frame (in the last frame's time) still plays.
     void regrid()
     {
-        lastStep = clockAtOrBefore (position);
+        lastStep = clockAtOrBefore (position - perFrame * (1.0 - clockSlack));
         regridWanted = false;
     }
 
@@ -731,6 +761,8 @@ private:
     uint32_t played = 0; // hits played (for the screen)
     // Ratchet: the hits left in this step, and when the next comes (frames since prepare()).
     uint64_t now = 0, ratchetFrom = 0, ratchetNext = 0;
+    int64_t clockedAt = 0;     // the frame the last step's clock came on
+    bool clockedLoud = false;  // and whether that step played
     double ratchetGap = 0.0;
     int ratchetsLeft = 0, ratchetCount = 0;
     uint32_t tick = 0, lastBlock = 0, noise = 0x9e3779b9u;
