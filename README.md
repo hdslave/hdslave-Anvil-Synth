@@ -207,8 +207,8 @@ hashes hold for Melodee's build image and these compiler flags.
 
 ## Install
 
-Copy `build/Anvil.clap` to `Melodee/Plugins/hdslave Anvil/hdslave Anvil.clap` on the card (or the staged card's
-folder), then pick it on an empty track: Stage, Plugin, hdslave Anvil. It needs only libc and libm, glibc 2.35 or
+Copy `build/Anvil.clap` to `Melodee/Plugins/hdslave/hdslave Anvil.clap` on the card (or the staged card's
+folder), then pick it on an empty track: Stage, Plugin, hdslave, hdslave Anvil. It needs only libc and libm, glibc 2.35 or
 newer (the MPC has 2.39).
 
 ## Credits
