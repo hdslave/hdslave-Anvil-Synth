@@ -43,3 +43,4 @@ Read `../AGENTS.md`, then `../Workflow/plugins.md` and `../Workflow/host-facts.m
 - `src/ui/page.h` is an identical copy of TB-MPC-3-P-0's: keep the two in sync.
 - The fingerprint's random scenarios draw values for fixed parameter lists (`order01`, `order02`…). Add a new list when adding parameters, so the old hashes hold.
 - The clock code (song-anchored steps, a late loop wrap, Run with Play, Chance and Ratchet) has a test for each case in `tests/host.cpp`. Keep them passing.
+- Pads (MIDI notes): with Run on every note plays the step its key names (36-43 steps 1-8, every 8 notes again) without moving the sequence, stopped or playing; with Run off Notes decides (Pitch, index 0, once called Trigger: the key chromatically, middle C = the Freq knobs; Steps: as Run on). `testPads` in `tests/host.cpp` holds it.

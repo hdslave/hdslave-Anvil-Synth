@@ -211,7 +211,7 @@ void handle (Plugin& p, const clap_event_header* e, const clap_output_events* ou
         }
         case CLAP_EVENT_NOTE_ON:
         {
-            // Notes: Trigger plays the step the sequence is on; Notes: Steps the step the key names.
+            // Run on (or Notes: Steps): the step the key names; Run off with Notes: Pitch: the key's pitch.
             const auto* n = reinterpret_cast<const clap_event_note*> (e);
             if (n->velocity > 0.0 && n->key >= 0 && n->key < 128)
                 p.engine.note (n->key, (float) n->velocity);

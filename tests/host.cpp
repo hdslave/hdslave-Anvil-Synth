@@ -77,6 +77,13 @@ struct Events
         a.note = { { sizeof (clap_event_note), time, CLAP_CORE_EVENT_SPACE_ID, type, 0 }, -1, 0, 0, key, velocity };
         list.push_back (a);
     }
+    // Raw MIDI, as a host with the MIDI dialect sends it (hdslaveOS forwards CC 120 / 123 this way).
+    void midi (uint32_t time, uint8_t status, uint8_t a1, uint8_t a2)
+    {
+        Any a {};
+        a.midi = { { sizeof (clap_event_midi), time, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_MIDI, 0 }, 0, { status, a1, a2 } };
+        list.push_back (a);
+    }
     void sort() { std::stable_sort (list.begin(), list.end(), [] (const Any& a, const Any& b) { return a.header.time < b.header.time; }); }
 };
 
@@ -1499,6 +1506,304 @@ void testScreen (const std::string& folder)
     canvas.shift = false;
 }
 
+// 0.6: the pads. With Run on (the sequencer's own switch, the transport playing or not) every MIDI note plays the step
+// its key names (36-43 steps 1-8, 44-51 steps 1-8 again ...) as the sequencer plays that step, without moving the
+// sequence; with Run off, Notes: Pitch (the default) plays the voice at the key's pitch, Notes: Steps the steps.
+namespace
+{
+// A pitched voice to tell the steps by: VCO 1's triangle alone at 144 Hz through an open filter, a 10 s VCA decay, each
+// step its own Pitch and Velocity (unquantized, steps 1-8 are 144, 203.6, 288, 101.8, 171.2, 242.2, 72, 342.4 Hz).
+const double padPitch[8] = { 0.0, 0.1, 0.2, -0.1, 0.05, 0.15, -0.2, 0.25 };
+const double padVelocity[8] = { 1.0, 0.6, 0.8, 0.7, 0.9, 0.5, 0.75, 0.65 };
+double padHz (int s) { return 144.0 * std::exp2 (padPitch[s] * 5.0); }
+using Values = std::vector<std::pair<std::string, double>>;
+Values padPatch (Instance& a, const Values& extra = {})
+{
+    Values v { { "VCO 1 Level", 1.0 }, { "VCO 2 Level", 0.0 }, { "Noise Level", 0.0 }, { "VCO 1 Wave", 1.0 }, { "VCO 2 Wave", 1.0 },
+               { "VCO 1 EG Amt", 0.0 }, { "VCO 2 EG Amt", 0.0 }, { "1-2 FM Amt", 0.0 }, { "VCO EG > FM 1-2 Amt", 0.0 }, { "Cutoff", 1.0 },
+               { "Resonance", 0.0 }, { "VCF EG Amt", 0.0 }, { "VCA EG", a.valueOf ("VCA EG", "Fast") }, { "VCA Decay", 1.0 },
+               { "Volume", 0.5 }, { "VCO 1 Freq", 0.5 }, { "VCO 2 Freq", 0.5 } };
+    for (int s = 0; s < 8; ++s)
+        v.push_back ({ "Pitch " + std::to_string (s + 1), padPitch[s] }), v.push_back ({ "Velocity " + std::to_string (s + 1), padVelocity[s] });
+    v.insert (v.end(), extra.begin(), extra.end());
+    return v;
+}
+// The routes a step's pitch and velocity take, Quantize, and Chance 0 (the sequence itself would sound no step).
+Values padRoutes (Instance& a)
+{
+    return { { "Cutoff", 0.55 }, { "Pitch > Cutoff", 0.5 }, { "Vel > Cutoff", 0.4 }, { "VCF EG Amt", 0.2 }, { "VCF EG > VCO 2", 0.3 },
+             { "VCO 2 Level", 0.5 }, { "Quantize", a.valueOf ("Quantize", "Minor") }, { "Chance", 0.0 } };
+}
+Values operator+ (Values a, const Values& b) { a.insert (a.end(), b.begin(), b.end()); return a; }
+
+// Events at absolute frames, each sent in the block that holds its frame (in list order on one frame).
+using Act = std::function<void (Instance&, Events&, uint32_t)>;
+using Timeline = std::vector<std::pair<uint64_t, Act>>;
+Act noteOn (int key, double velocity) { return [=] (Instance&, Events& e, uint32_t t) { e.note (t, CLAP_EVENT_NOTE_ON, (int16_t) key, velocity); }; }
+Act noteOff (int key) { return [=] (Instance&, Events& e, uint32_t t) { e.note (t, CLAP_EVENT_NOTE_OFF, (int16_t) key, 0.0); }; }
+Act value (const char* name, double v) { return [=] (Instance& a, Events& e, uint32_t t) { e.param (t, a.id (name), v); }; }
+Act midi (uint8_t status, uint8_t a1, uint8_t a2) { return [=] (Instance&, Events& e, uint32_t t) { e.midi (t, status, a1, a2); }; }
+// hdslaveOS's silence: CC 120 and 123 at 0 on every channel, and the chokes its CLAP instance makes of them.
+Act storm (int key)
+{
+    return [=] (Instance&, Events& e, uint32_t t) {
+        for (uint8_t ch = 0; ch < 16; ++ch)
+            e.midi (t, (uint8_t) (0xb0 | ch), 120, 0), e.midi (t, (uint8_t) (0xb0 | ch), 123, 0);
+        e.note (t, CLAP_EVENT_NOTE_CHOKE, (int16_t) key, 0.0);
+        e.note (t, CLAP_EVENT_NOTE_OFF, (int16_t) key, 0.0);
+    };
+}
+// The sequencer playing step `s` itself: Advance s times from step 1 (on frames 0, 1 ...), then Trigger at `frame`.
+Timeline stepByPanel (int s, uint64_t frame)
+{
+    Timeline t;
+    for (int k = 0; k < s; ++k)
+        t.push_back ({ (uint64_t) k, value ("Advance", 1.0) });
+    t.push_back ({ frame, value ("Trigger", 1.0) });
+    return t;
+}
+std::vector<float> run (Instance& a, uint32_t frames, bool playing, const Timeline& events, uint32_t block = 128, double bpm = 120.0)
+{
+    std::vector<float> l, r;
+    a.render (frames, block, l, r, [=] (uint64_t at) { return playing ? playingFrom (0.0, bpm, 48000.0, at) : Transport { false, bpm, 0.0 }; },
+              [&] (uint64_t at, uint32_t n, Events& e) {
+                  for (auto& [when, act] : events)
+                      if (when >= at && when < at + n)
+                          act (a, e, (uint32_t) (when - at));
+              });
+    CHECK (l == r);
+    return l;
+}
+// The frequency heard in [from, from + length) (0.4 s unless told).
+double hzAt (const std::vector<float>& l, size_t from, size_t length = 19200) { return crossings (l, from, from + length) / (length / 48000.0); }
+bool near (double hz, double want) { return std::fabs (hz - want) <= std::max (4.0, want * 0.02); }
+float loudest (const std::vector<float>& x) { float m = 0.0f; for (float v : x) m = std::max (m, std::fabs (v)); return m; }
+} // namespace
+
+void testPads()
+{
+    // The choice's names: Notes is Pitch (the default) or Steps; its old name Trigger still reads as Pitch.
+    {
+        Instance a;
+        char text[64] = {};
+        CHECK (a.params->value_to_text (a.plugin, a.id ("Notes"), 0.0, text, sizeof (text)) && std::string (text) == "Pitch");
+        CHECK (a.params->value_to_text (a.plugin, a.id ("Notes"), 1.0, text, sizeof (text)) && std::string (text) == "Steps");
+        CHECK (a.value ("Notes") == 0.0 && a.value ("Run") == 1.0);
+        double v = -1.0;
+        CHECK (a.params->text_to_value (a.plugin, a.id ("Notes"), "Trigger", &v) && v == 0.0);
+        CHECK (a.valueOf ("Notes", "Pitch") == 0.0 && a.valueOf ("Notes", "Steps") == 1.0);
+    }
+    // Run on, the transport stopped: each of notes 36 to 51 (pads 1 to 16) plays the step it names (pads 9-16 are
+    // steps 1-8 again), as the panel's Trigger plays it on that step: to the bit, its quantized pitch, its velocity,
+    // the routes, though Chance 0 would never sound it. Notes: Pitch or Steps, the same. A softer pad, softer.
+    for (double notes : { 0.0, 1.0 })
+        for (int key = 36; key <= 51; ++key)
+        {
+            const int s = (key - 36) % 8;
+            Instance pad, panel;
+            pad.setup (padPatch (pad, padRoutes (pad) + Values { { "Notes", notes } }));
+            panel.setup (padPatch (panel, padRoutes (panel) + Values { { "Notes", notes } }));
+            const auto got = run (pad, 24000, false, { { 1280, noteOn (key, 1.0) } });
+            const auto want = run (panel, 24000, false, stepByPanel (s, 1280));
+            CHECK (loudest (want) > 0.05f && got == want);
+        }
+    {
+        Instance pad, panel;
+        pad.setup (padPatch (pad, padRoutes (pad)));
+        panel.setup (padPatch (panel, padRoutes (panel) + Values { { "Velocity 6", padVelocity[5] * 0.5 } }));
+        CHECK (run (pad, 24000, false, { { 1280, noteOn (41, 0.5) } }) == run (panel, 24000, false, stepByPanel (5, 1280)));
+    }
+    // The pitch heard, Quantize Off: each pad its step's. The sequence did not move: Trigger then plays step 1, at its
+    // own pitch (a previewed pitch holds only till a step replaces it), and Advance step 2.
+    {
+        Instance a;
+        a.setup (padPatch (a));
+        const auto l = run (a, 48000 * 6, false, { { 0, noteOn (39, 1.0) }, { 24000, noteOn (42, 1.0) }, { 48000, noteOn (50, 1.0) },
+                                                    { 72000, noteOn (43, 0.8) }, { 96000, value ("Trigger", 1.0) }, { 120000, noteOn (37, 1.0) },
+                                                    { 144000, value ("Advance", 1.0) }, { 168000, value ("Trigger", 1.0) } });
+        const int expect[] = { 3, 6, 6, 7, 0, 1, -1, 1 };
+        for (int i = 0; i < 8; ++i)
+            if (expect[i] >= 0)
+            {
+                const double hz = hzAt (l, (size_t) i * 24000 + 1000);
+                if (std::getenv ("ANVIL_DEBUG")) std::printf ("debug pad %d: %.1f Hz (step %d: %.1f)\n", i, hz, expect[i] + 1, padHz (expect[i]));
+                CHECK (near (hz, padHz (expect[i])));
+            }
+    }
+    // While the host plays (1/4 steps: 24,000 frames): a pad between two steps plays its step at once; the sequence goes
+    // on as it would have (step 2 next, then 3), each at its own pitch.
+    {
+        Instance a, b;
+        a.setup (padPatch (a, { { "Clock Div", a.valueOf ("Clock Div", "1/4") } }));
+        b.setup (padPatch (b, { { "Clock Div", b.valueOf ("Clock Div", "1/4") } }));
+        const auto with = run (a, 72000, true, { { 5888, noteOn (39, 1.0) } }); // pad 4, in step 1 (a block's first frame)
+        const auto without = run (b, 72000, true, {});
+        CHECK (near (hzAt (without, 7000, 14400), padHz (0)) && near (hzAt (with, 7000, 14400), padHz (3)));
+        CHECK (near (hzAt (with, 25000), padHz (1)) && near (hzAt (with, 49000), padHz (2)));
+        CHECK (near (hzAt (with, 25000), hzAt (without, 25000)) && near (hzAt (with, 49000), hzAt (without, 49000)));
+    }
+    // A pad on Play's frame (all of a block's MIDI comes on its first frame): the louder of the pad's step and step 1
+    // plays, whole; on a tie the later, the sequence's. Softer or tied, it is as if no pad was hit, to the bit; louder,
+    // its step sounds on the downbeat and the sequence goes on with step 2.
+    for (double fourth : { 0.3, 1.0 })
+    {
+        Instance a, b;
+        a.setup (padPatch (a, { { "Clock Div", a.valueOf ("Clock Div", "1/4") }, { "Velocity 4", fourth } }));
+        b.setup (padPatch (b, { { "Clock Div", b.valueOf ("Clock Div", "1/4") }, { "Velocity 4", fourth } }));
+        CHECK (run (a, 48000, true, { { 0, noteOn (39, 1.0) } }) == run (b, 48000, true, {}));
+    }
+    {
+        Instance a;
+        a.setup (padPatch (a, { { "Clock Div", a.valueOf ("Clock Div", "1/4") }, { "Velocity 1", 0.5 }, { "Velocity 4", 1.0 } }));
+        const auto l = run (a, 72000, true, { { 0, noteOn (39, 1.0) } });
+        CHECK (near (hzAt (l, 1000), padHz (3)) && near (hzAt (l, 25000), padHz (1)) && near (hzAt (l, 49000), padHz (2)));
+    }
+    // Two pads on one frame: the louder step plays, whole, whichever the host sends first; on a tie the later.
+    for (bool tie : { false, true })
+        for (bool fiveFirst : { false, true })
+        {
+            Instance pad, panel;
+            const Values v { { "Velocity 2", tie ? 0.8 : padVelocity[1] }, { "Velocity 5", tie ? 0.8 : padVelocity[4] } };
+            pad.setup (padPatch (pad, padRoutes (pad) + v));
+            panel.setup (padPatch (panel, padRoutes (panel) + v));
+            const int later = fiveFirst ? 1 : 4, wins = tie ? later : 4;
+            const auto got = run (pad, 24000, false, { { 1280, noteOn (fiveFirst ? 40 : 37, 1.0) }, { 1280, noteOn (fiveFirst ? 37 : 40, 1.0) } });
+            CHECK (got == run (panel, 24000, false, stepByPanel (wins, 1280)));
+        }
+    // A re-pressed pad, as hdslaveOS sends it: on, on, off. On one frame: one hit. Pressed again later: it plays again;
+    // the note-off changes nothing.
+    {
+        Instance pad, panel;
+        pad.setup (padPatch (pad));
+        panel.setup (padPatch (panel));
+        CHECK (run (pad, 24000, false, { { 1280, noteOn (38, 1.0) }, { 1280, noteOn (38, 1.0) }, { 1280, noteOff (38) } })
+               == run (panel, 24000, false, stepByPanel (2, 1280)));
+        Instance a, b;
+        a.setup (clickPatch (a));
+        b.setup (clickPatch (b));
+        const auto offs = run (a, 48000, false, { { 1280, noteOn (38, 1.0) }, { 12800, noteOn (38, 1.0) }, { 25600, noteOff (38) } });
+        const auto none = run (b, 48000, false, { { 1280, noteOn (38, 1.0) }, { 12800, noteOn (38, 1.0) } });
+        const auto hits = onsets (offs);
+        CHECK (offs == none && hits.size() == 2 && hits[0] >= 1280 && hits[0] < 1280 + 48 && hits[1] >= 12800 && hits[1] < 12800 + 48);
+    }
+    // MIDI's own note-on (a host with the MIDI dialect) plays the same; velocity 0 is a note-off; hdslaveOS's silence
+    // (CC 120 and 123 at 0 on every channel, a choke, a note-off) neither plays nor stops a step, nor moves a value.
+    {
+        Instance a, b, c;
+        a.setup (padPatch (a));
+        b.setup (padPatch (b));
+        c.setup (padPatch (c));
+        const auto clapNote = run (a, 48000, false, { { 1280, noteOn (38, 1.0) } });
+        const auto midiNote = run (b, 48000, false, { { 1280, midi (0x90, 38, 127) }, { 12800, midi (0x90, 40, 0) }, { 12800, storm (38) },
+                                                      { 25600, storm (38) } });
+        CHECK (midiNote == clapNote);
+        double values = 0.0;
+        for (auto& [name, id] : c.ids)
+            values += c.value (name);
+        const auto quiet = run (c, 12800, false, { { 0, storm (38) }, { 128, midi (0x90, 38, 0) } });
+        double after = 0.0;
+        for (auto& [name, id] : c.ids)
+            after += c.value (name);
+        CHECK (loudest (quiet) == 0.0f && after == values);
+    }
+    // Run off, Notes: Pitch (the default): chromatic. Middle C (60) plays the Freq knobs as they are; each key a
+    // semitone, not snapped by Quantize (Major here: 61 would snap to 60 or 62).
+    for (auto [key, hz] : { std::pair<int, double> { 60, 144.0 }, { 72, 288.0 }, { 48, 72.0 }, { 67, 215.8 }, { 61, 152.6 }, { 36, 36.0 } })
+    {
+        Instance a;
+        a.setup (padPatch (a, { { "Run", 0.0 }, { "Quantize", a.valueOf ("Quantize", "Major") } }));
+        const double got = hzAt (run (a, 24000, false, { { 0, noteOn (key, 1.0) } }), 2000);
+        if (std::getenv ("ANVIL_DEBUG")) std::printf ("debug key %d: %.1f Hz (want %.1f)\n", key, got, hz);
+        CHECK (near (got, hz));
+    }
+    // ...the key as a step of its own: the same, to the bit, as Trigger on a step whose Pitch is the key's distance
+    // from middle C and whose Velocity is the note's (Quantize Off there), through every route.
+    for (auto [key, velocity] : { std::pair<int, double> { 72, 1.0 }, { 48, 0.5 }, { 61, 0.8 } })
+    {
+        Instance pad, panel;
+        const Values routes { { "Run", 0.0 }, { "Seq Pitch Mod", pad.valueOf ("Seq Pitch Mod", "VCO 2") }, { "VCO 1 Level", 0.5 } };
+        pad.setup (padPatch (pad, padRoutes (pad) + routes + Values { { "Quantize", pad.valueOf ("Quantize", "Major") } }));
+        panel.setup (padPatch (panel, padRoutes (panel) + routes
+                                     + Values { { "Quantize", 0.0 }, { "Pitch 1", (key - 60) / 60.0 }, { "Velocity 1", velocity } }));
+        const auto got = run (pad, 24000, false, { { 1280, noteOn (key, velocity) } });
+        CHECK (loudest (got) > 0.05f && got == run (panel, 24000, false, stepByPanel (0, 1280)));
+    }
+    // ...and the sequence stays where it is: Trigger plays step 1, at its pitch; Advance while a key rings moves the
+    // pitch to step 2's (quantized again: Major makes its 6 semitones 7).
+    {
+        Instance a;
+        a.setup (padPatch (a, { { "Run", 0.0 } }));
+        const auto l = run (a, 72000, false, { { 0, noteOn (72, 1.0) }, { 24000, value ("Trigger", 1.0) } });
+        CHECK (near (hzAt (l, 2000), 288.0) && near (hzAt (l, 26000), padHz (0)));
+        Instance b;
+        b.setup (padPatch (b, { { "Run", 0.0 }, { "Quantize", b.valueOf ("Quantize", "Major") } }));
+        const auto m = run (b, 48000, false, { { 0, noteOn (48, 1.0) }, { 24000, value ("Advance", 1.0) } });
+        CHECK (near (hzAt (m, 2000), 72.0) && near (hzAt (m, 26000), 144.0 * std::exp2 (7.0 / 12.0)));
+    }
+    // Run off, Notes: Steps: the pads play the steps, as before 0.6 (Pad Kit's way: its eight drums on the pads alone).
+    {
+        Instance pad, panel;
+        pad.setup (padPatch (pad, { { "Run", 0.0 }, { "Notes", 1.0 } }));
+        panel.setup (padPatch (panel, { { "Run", 0.0 }, { "Notes", 1.0 } }));
+        CHECK (run (pad, 24000, false, { { 1280, noteOn (46, 1.0) } }) == run (panel, 24000, false, stepByPanel (2, 1280)));
+        Instance kit, kitPanel;
+        CHECK (kit.loadPreset ("pad-kit") && kitPanel.loadPreset ("pad-kit"));
+        kit.setup ({ { "Run", 0.0 } });
+        kitPanel.setup ({ { "Run", 0.0 } });
+        const auto drum = run (kit, 24000, false, { { 1280, noteOn (41, 1.0) } });
+        CHECK (loudest (drum) > 0.05f && drum == run (kitPanel, 24000, false, stepByPanel (5, 1280)));
+    }
+    // Two keys on one frame with Run off: the louder plays, whole; on a tie the later.
+    for (bool tie : { false, true })
+        for (bool highFirst : { false, true })
+        {
+            Instance pad, alone;
+            pad.setup (padPatch (pad, { { "Run", 0.0 } }));
+            alone.setup (padPatch (alone, { { "Run", 0.0 } }));
+            const double soft = tie ? 1.0 : 0.5;
+            const auto got = run (pad, 24000, false, { { 1280, highFirst ? noteOn (72, 1.0) : noteOn (48, soft) },
+                                                       { 1280, highFirst ? noteOn (48, soft) : noteOn (72, 1.0) } });
+            const int wins = tie ? (highFirst ? 48 : 72) : 72;
+            CHECK (got == run (alone, 24000, false, { { 1280, noteOn (wins, wins == 72 ? 1.0 : soft) } }));
+        }
+    // The page's Push plays the step picked, whatever Run and Notes are (it is no note).
+    {
+        Instance a, panel;
+        a.setup (padPatch (a, { { "Run", 0.0 } }));
+        panel.setup (padPatch (panel, { { "Run", 0.0 } }));
+        const auto* screen = static_cast<const clap_plugin_melodee_screen*> (a.plugin->get_extension (a.plugin, CLAP_EXT_MELODEE_SCREEN));
+        CHECK (screen != nullptr);
+        if (screen != nullptr)
+        {
+            melodee_screen_input_t wheel { MELODEE_SCREEN_WHEEL, 2, false }, push { MELODEE_SCREEN_PUSH, 0, false };
+            CHECK (screen->input (a.plugin, &wheel) && screen->input (a.plugin, &push));
+            const auto got = run (a, 24000, false, {});
+            CHECK (loudest (got) > 0.05f && got == run (panel, 24000, false, { { 0, value ("Advance", 1.0) }, { 0, value ("Advance", 1.0) }, { 0, value ("Trigger", 1.0) } }));
+        }
+    }
+    // The same output in blocks of 128, 37, 1 and 4096 frames, to the bit: pads between and on steps, two on one frame,
+    // on/on/off, MIDI pads, a silence storm, Run switched off (keys), Notes: Steps, Run on again.
+    {
+        const Timeline busy { { 3000, noteOn (38, 0.9) }, { 13000, noteOn (37, 1.0) }, { 13000, noteOn (44, 0.7) }, { 20000, noteOn (40, 1.0) },
+                              { 20000, noteOn (40, 1.0) }, { 24000, value ("Cutoff", 0.5) }, { 24000, noteOn (39, 1.0) }, { 26000, noteOff (40) }, { 30001, midi (0x90, 41, 100) }, { 36000, storm (41) },
+                              { 42000, noteOn (51, 1.0) }, { 48000, value ("Run", 0.0) }, { 48000, noteOn (72, 1.0) }, { 50017, noteOn (49, 0.4) },
+                              { 50017, noteOn (61, 0.8) }, { 60000, value ("Notes", 1.0) }, { 60005, noteOn (45, 1.0) }, { 70000, value ("Run", 1.0) },
+                              { 70000, noteOn (36, 1.0) }, { 84001, noteOn (47, 0.6) } };
+        std::vector<float> first;
+        for (uint32_t block : { 128u, 37u, 1u, 4096u })
+        {
+            Instance a;
+            a.setup (padPatch (a, padRoutes (a) + Values { { "Chance", 0.6 }, { "Ratchet", 2.0 }, { "VCA Decay", 0.4 } }));
+            const auto l = run (a, 96000, true, busy, block);
+            if (block == 128)
+                first = l;
+            else
+                CHECK (l == first);
+        }
+        CHECK (loudest (first) > 0.05f);
+    }
+}
+
 int main (int argc, char** argv)
 {
     if (argc < 3)
@@ -1538,6 +1843,7 @@ int main (int argc, char** argv)
     testPitchAndFm();
     testQuantize();
     testScreen (argv[2]);
+    testPads();
     testExtremes();
     demos (argv[2]);
     entry->deinit();

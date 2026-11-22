@@ -331,6 +331,8 @@ public:
         dirty = true;
         if (id == ParamId::clockDiv)
             regridWanted = true;
+        if (id == ParamId::quantize && ! heldKey)
+            heldQuantize = v;
         if (id == ParamId::run && v >= 0.5f && was < 0.5f)
             runPressed = true; // Run plays the step it is on at once, then goes on from it
     }
@@ -342,27 +344,37 @@ public:
         {
             stepIndex = following (stepIndex);
             heldPitch = knob[ParamId::pitch1 + stepIndex]; // the pitch CV follows the step, sounding or not
+            heldKey = false, heldQuantize = knob[ParamId::quantize];
             dirty = true;
         }
         else
             fire();
     }
 
-    // A MIDI note: Notes: Trigger plays the step the sequence is on (as Trigger does); Notes: Steps plays the step the
-    // key names: 36 to 43 are steps 1 to 8, and so on up and down the keyboard.
+    // A MIDI note (a pad). Run on (the sequencer's own switch, whether or not the host plays), or Notes: Steps: the
+    // step the key names plays, 36 to 43 steps 1 to 8, and so on up and down the keyboard (a pad previews its step).
+    // Run off with Notes: Pitch: the voice plays the key, as a step of its own (chromatic).
     void note (int key, float velocity)
     {
-        if (knob[ParamId::noteMode] >= 0.5f)
+        if (knob[ParamId::run] >= 0.5f || knob[ParamId::noteMode] >= 0.5f)
             playStep (((key - firstStepNote) % 8 + 8) % 8, velocity);
         else
-            fire();
+            playKey (key, velocity);
     }
 
-    // Notes: Steps: a note plays step `s` at once, at its pitch and velocity (times the note's), without moving the
-    // sequence.
+    // A note plays step `s` at once, at its pitch and velocity (times the note's), without moving the sequence.
     void playStep (int s, float velocity)
     {
         fireStep (s & 7, knob[ParamId::velocity1 + (s & 7)] * velocity);
+    }
+
+    // Notes: Pitch with Run off: the voice plays at once as a step whose Pitch is the key's distance from middle C
+    // (key 60 plays the Freq knobs as they are) and whose velocity is the note's, through the routes a step's pitch
+    // and velocity take (Seq Pitch Mod, Pitch > Cutoff, Vel > Cutoff ...), not snapped by Quantize; the sequence
+    // does not move.
+    void playKey (int key, float velocity)
+    {
+        strike ((float) (key - 60) / (seqPitchOctaves * 12.0f), true, velocity);
     }
 
     // Where the sequence's own count is: for a host that gives no song position (0 when it last stopped).
@@ -594,7 +606,11 @@ private:
     // it). A louder step also decays a little longer.
     void fire() { fireStep (stepIndex, knob[ParamId::velocity1 + stepIndex]); }
 
-    void fireStep (int s, float v)
+    void fireStep (int s, float v) { strike (knob[ParamId::pitch1 + s], false, v); }
+
+    // A hit at `pitch` (a step's Pitch knob, -1..1 for +-5 octaves; `key`: a played key's, which Quantize leaves as it
+    // is) and level `v`.
+    void strike (float pitch, bool key, float v)
     {
         // Two steps on one frame (two pads at once, in whatever order the host sends them): the louder plays, whole (its
         // pitch, cutoff and decays as well as its level); on a tie the later.
@@ -602,7 +618,8 @@ private:
             return;
         firedAt = now, firedLevel = v;
         ++played;
-        heldPitch = knob[ParamId::pitch1 + s];
+        heldPitch = pitch;
+        heldKey = key, heldQuantize = key ? 0.0f : knob[ParamId::quantize];
         stepLevel = v;
         retarget();
         smooth[pitch1] = target[pitch1];
@@ -631,8 +648,9 @@ private:
     void retarget()
     {
         const int mod = (int) knob[ParamId::seqPitchMod];
-        // The held step's pitch in octaves, as Quantize plays it (Off: the knob as it is).
-        const int quantize = (int) knob[ParamId::quantize];
+        // The held step's pitch in octaves, as Quantize plays it (Off: the knob as it is). A played key's pitch is held
+        // with Quantize Off (heldQuantize: the knob's, or Off for a key).
+        const int quantize = (int) heldQuantize;
         const float seq = quantize == 0 ? heldPitch * seqPitchOctaves : quantizedSemitones (heldPitch, quantize) * (1.0f / 12.0f);
         target[pitch1] = std::log2 (vcoLowHz) + knob[ParamId::vco1Freq] * vcoOctaves + (mod == 0 ? seq : 0.0f);
         target[pitch2] = std::log2 (vcoLowHz) + knob[ParamId::vco2Freq] * vcoOctaves + (mod != 1 ? seq : 0.0f);
@@ -771,6 +789,8 @@ private:
     float pink[3] {}, pinkPole[3] {};
     bool tri1 = false, tri2 = false, sync = false, highPass = false, pinkNoise = false;
     bool playing = false, aligned = false, regridWanted = false, dirty = true, moving = false, runPressed = false;
+    bool heldKey = false; // the held pitch is a played key's (Notes: Pitch), not a step's: Quantize leaves it
+    float heldQuantize = 0.0f; // the Quantize the held pitch plays by: the knob's, or Off for a played key
     int64_t lastStep = -1, travel = 0;
     int stepIndex = 0;
     uint32_t played = 0; // hits played (for the screen)

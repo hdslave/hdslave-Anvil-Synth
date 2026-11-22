@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.5.4"
+#define ANVIL_VERSION "0.6.0"
 #endif
 
 namespace anvil
@@ -87,9 +87,13 @@ inline const char* const waveChoices[] = { "Square", "Triangle" };
 inline const char* const vcfModeChoices[] = { "Low Pass", "High Pass" };
 inline const char* const vcaEgChoices[] = { "Fast", "Slow" };
 inline const char* const runChoices[] = { "Stop", "Run" };
-inline const char* const noteModeChoices[] = { "Trigger", "Steps" };
+// Notes: what a MIDI note (a pad) does while Run is off. With Run on, every note plays a step (as Steps does).
+// Pitch: the voice at the key's pitch (chromatic). Index 0 was called Trigger before 0.6.0 (a note played the step the
+// sequence was on); typed text "Trigger" still reads as it.
+inline const char* const noteModeChoices[] = { "Pitch", "Steps" };
 inline const char* const directionChoices[] = { "Forward", "Backward", "Ping-Pong", "Random" };
-// Notes: Steps: MIDI notes 36 to 43 (a Melodee drum track's pads 1 to 8) play steps 1 to 8; every 8 notes up, again.
+// Run on (or Notes: Steps): MIDI notes 36 to 43 (pads 1 to 8 of a plug-in track at hdslaveOS's defaults) play steps 1
+// to 8; every 8 notes up and down, again (pads 9 to 16, notes 44 to 51, are steps 1 to 8 too).
 constexpr int firstStepNote = 36;
 // The patch routings at full turn: velocity moves the cutoff 4 octaves; the VCF EG moves VCO 2 as far as a VCO EG
 // Amt does (8 octaves); a step's pitch moves the cutoff by as much as it moves the VCO (1:1 tracking).
@@ -267,6 +271,8 @@ inline bool parseParam (const Param& p, const char* text, float& v)
         for (int i = 0; i < n; ++i)
             if (strcasecmp (text, p.choices[i]) == 0)
                 return v = (float) i, true;
+        if (p.id == ParamId::noteMode && strcasecmp (text, "Trigger") == 0) // its name before 0.6.0
+            return v = 0.0f, true;
     }
     if (p.kind == Kind::button)
     {

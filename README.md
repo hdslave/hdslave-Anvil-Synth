@@ -4,7 +4,7 @@
 
 ![Anvil custom screen running in hdslaveOS](docs/anvil-screen.gif)
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.0). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 Its 8-step pitch and velocity sequencer (with variable Length and host swing) locks tightly to the host transport: steps fall on the beat grid while playing, stop on stop, and follow song jumps. Under **hdslaveOS**, Anvil draws its own live step-bar and velocity screen directly on the MPC Sample (see [The screen](#the-screen)).
 
@@ -22,7 +22,10 @@ Every step triggers all three envelopes at its velocity. A softer step does not 
 nor a louder step's attack still rising (the slow VCA attack under a fast pattern, or a Trigger on a step's frame):
 the louder step reaches its full peak.
 
-On the MPC it draws its own page on the screen (see [The screen](#the-screen)).
+On the MPC it draws its own page on the screen (see [The screen](#the-screen)). While Run is on, the pads play the
+steps; with Run off they play notes (see [The pads](#the-pads-midi-notes)).
+
+Not yet run on the MPC itself: tested in hdslaveOS's own CLAP host code (`clap_check`) and this repository's tests.
 
 ## Controls
 
@@ -59,16 +62,33 @@ The panel's names, in the order Melodee's Edit page lists them (three to a page)
 | Direction | — | — | Forward / Backward (1, Length … 2) / Ping-Pong (1 … Length … 2) / Random. Random follows the song's place: the same steps when the same part plays again |
 | Chance | — | — | 0 – 100 %: how likely each step is to sound (a silent step still moves the sequence); also the same for the same place in the song |
 | Ratchet | — | — | 1 – 4 hits a step, spread evenly over it |
-| Run | RUN/STOP | PLAY/STOP | Stop / Run |
+| Run | RUN/STOP | PLAY/STOP | Stop / Run. Also what the pads do: with Run on they play the steps ([The pads](#the-pads-midi-notes)) |
 | Trigger | TRIGGER | TRIGGER | plays the current step without moving |
 | Advance | ADVANCE | ADVANCE | moves one step without playing (in the Direction set) |
-| Notes | — | — | What a MIDI note does: **Trigger** plays the step the sequence is on, as Trigger does; **Steps** plays the step the key names, at its pitch and velocity times the note's: notes 36–43 (a Melodee drum track's pads 1–8) are steps 1–8, and so on up and down the keyboard |
+| Notes | — | — | What a MIDI note does while Run is off: **Pitch** (the default) plays the voice at the key's pitch, chromatically; **Steps** plays the step the key names, as Run on does. Before 0.6.0 Pitch was **Trigger** (a note played the step the sequence was on); saved projects keep the setting, which now means Pitch |
 | Quantize | — | — | Off / Semitones / Major / Minor / Minor Pent / Phrygian / Fifths / Octaves: the steps' Pitch snaps to semitones, or to the nearest note of the scale counted from the VCOs' own pitch (a step at 0 plays the Freq knobs as they are). The Pitch knobs then read as the note they play. Off: any pitch, as on the panel |
 | Pitch 1–8 | PITCH 1–8 | PITCH | ±5 octaves |
 | Velocity 1–8 | VELOCITY 1–8 | VEL | 0 – 100 % |
 
-A MIDI note (a pad on a Melodee plug-in track) does what Trigger does, or with Notes: Steps plays a step of its own:
-with the transport stopped, the eight steps become eight drum sounds on eight pads.
+### The pads (MIDI notes)
+
+On a plug-in track at hdslaveOS's defaults (octave 2, key C, Chromatic) pads 1–16 send notes 36–51.
+
+- **Run on (the default): pads 1–16 play steps.** Pads 1–8 (notes 36–43) are steps 1–8, pads 9–16 (44–51) steps 1–8
+  again, and so on every 8 notes up and down the keyboard. A pad plays its step at once, as the sequencer plays that
+  step: its Pitch (as Quantize plays it), its Velocity times the pad's, through every route the step takes. It plays
+  even where the sequence would leave the step silent (Chance), and with the transport stopped or playing. The
+  sequence does not move: the next step is the one it would have been. The pad's pitch holds until the sequence's next
+  step (or Trigger, or Advance) replaces it.
+- **Run off: the pads play notes** (Notes: Pitch, the default). A key plays the voice as a step of its own: its Pitch
+  is the key's distance from middle C (note 60 plays the Freq knobs as they are; the default pads, 36–51, run from two
+  octaves below it to nine semitones below it), its velocity the note's, through the same routes (Seq Pitch Mod,
+  Pitch > Cutoff, Vel > Cutoff, VCF EG > VCO 2), not snapped by Quantize. The sequence does not move. With Notes: Steps
+  the pads play the steps, as with Run on.
+- Two pads on one frame (hdslaveOS sends a block's MIDI on its first frame) play the louder, whole; on a tie the later.
+  A pad on a step's own frame is such a pair too. A pad pressed again plays again; note-offs, chokes and hdslaveOS's
+  silence (CC 120 / 123) change nothing: each hit rings out, as a step does.
+- Trigger (the button) still plays the step the sequence is on, and the STEPS page's Push the step it picks.
 
 ### The new control
 
@@ -93,7 +113,7 @@ discovery does). A preset sets every control, Clock Div and the eight steps too;
 | Ratchet Snare | Noise and a swept triangle, every eighth hit twice (Ratchet 2), the backbeat loud, Chance leaving out a few ghost notes |
 | Random Zap | Laser zaps in a Random order: VCO 2 swept down, FM riding the VCO EG, VCF EG > VCO 2, steps a fifth or an octave apart (Quantize Fifths), some left out (Chance) |
 | Ping-Pong Toms | Six toms down a minor scale and back up (Ping-Pong, Length 6, Quantize Minor), swung |
-| Pad Kit | Notes: Steps: eight drums on pads 36–43, low to high, the higher brighter (Pitch > Cutoff); with the transport running it plays them as a pattern too (Run: Stop for the pads alone) |
+| Pad Kit | Eight drums on pads 1–8 (notes 36–43, and again on pads 9–16), low to high, the higher brighter (Pitch > Cutoff); with the transport running it plays them as a pattern too. Run: Stop for the pads alone: its Notes: Steps keeps the eight drums on the pads |
 
 They are the patches the demo renders play: the tests load each preset and check it gives the same values and the
 same samples as the demo's list.
@@ -104,7 +124,8 @@ In hdslaveOS (hdslave's Melodee fork), Anvil draws its own page in place of the 
 
 - **STEPS**, the panel's sequencer: the eight steps' pitch (bars from a middle line, full height ±2.5 octaves) and
   velocity, each pitch read as Quantize plays it, the step playing lit, steps past Length dimmed. The wheel picks a
-  step (framed), Push plays it as a pad would, K1 and K2 turn its Pitch and Velocity, K3 the Cutoff.
+  step (framed), Push plays it as its pad does while Run is on (with Run off too), K1 and K2 turn its Pitch and
+  Velocity, K3 the Cutoff.
 - **VCO, MIX, VCF, VCA, PATCH, SEQ**: the panel's knobs by section, the steps beside them.
 
 On a list the controls are hdslave Machine's: the wheel moves a row; Push edits it (the wheel then changes it: a
@@ -161,7 +182,7 @@ Instructions a 128-frame block takes, from `tools/bench.sh` (callgrind):
 |---|---|---|
 | Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 81,000 | 1.7 % |
 | A short percussive pattern | about 76,000 | 1.6 % |
-| Stopped | under 600 | 0.01 % |
+| Stopped | about 600 | 0.01 % |
 
 While the VCA is closed between hits the oscillators and filter are skipped. The voice's two samples a frame, and the
 synced oscillator's step, are compiled into the frame's loop rather than called (a fifth fewer instructions than
@@ -186,6 +207,13 @@ change inside a block, Clock Div changed on a downbeat, a button pressed through
 block; the same output whatever the block size (1, 37,
 128, 4096 frames); Trigger, Advance, Run and MIDI notes; Length (a cycle of 3, Advance wrapping in it) and Swing (66 and
 75 %, and a jump between a step's grid line and its late clock); Notes: Steps (notes 36 to 39 and 44, a softer note);
+the pads (with Run on, each of notes 36 to 51 the same, to the bit, as Trigger on its step, with the transport stopped,
+Quantize, Chance 0 and the routes on, and by the pitch heard, also while the host plays; the sequence not moved, the
+next step's pitch its own; a pad on Play's frame, softer, tied or louder; two pads on one frame, either order and tied;
+on/on/off of one pad; MIDI note-ons, velocity 0 and hdslaveOS's CC 120 / 123 and choke storm; with Run off, Notes: Pitch
+playing keys chromatically by the pitch heard, not snapped by Quantize, and to the bit as a step of their own through
+every route, two keys on one frame, Trigger and Advance afterwards; Notes: Steps and Pad Kit with Run off; the page's
+Push with Run off; the same output in blocks of 1, 37, 128 and 4096 frames);
 each Direction (the order read back from the steps' levels; Random the same twice); Chance (0 %, 50 % the same twice);
 Quantize (each scale's note from the pitch heard; the Pitch texts by it, and the host asked to read them again); the
 screen's page (it draws, picks and plays a step, its controls set the values the host then hears, its buttons press;
@@ -197,10 +225,11 @@ peak, to the bit; a first block that already plays (at the song's top, mid-step,
 that waited a stopped block, to the bit, and Run switched on on a step's frame playing it once; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
 
-`tests/fingerprint.cpp` then renders 60 fixed scenarios (each preset, the bench's patches, 24 random patches with the
+`tests/fingerprint.cpp` then renders 63 fixed scenarios (each preset, the bench's patches, 24 random patches with the
 buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps, Length and Swing, each Direction with
 Chance and Ratchet, the patch routings, notes playing steps, a loop wrapping inside a block in whole blocks and in
-parts) and hashes every output sample's bits
+parts, the pads playing steps with the transport stopped and playing, keys with Run off) and hashes every output
+sample's bits
 against `tests/fingerprint.txt`: work meant to keep the sound, such as a speed-up, must leave every hash as it is. A
 change meant to change the sound updates them with `make fingerprint-update` (run inside the build image). The
 hashes hold for Melodee's build image and these compiler flags.

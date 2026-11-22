@@ -139,6 +139,32 @@ std::vector<Scenario> scenarios()
         };
         list.push_back (s);
     }
+    // 0.6: the pads. Run on: notes 36 to 51 play their steps, with the transport stopped and playing (between steps,
+    // two on a step's own frame, on/on/off of one key); Run off: Notes: Pitch plays the keys, not snapped by Quantize.
+    for (bool playing : { true, false })
+    {
+        Scenario s;
+        s.name = std::string ("pads-steps-") + (playing ? "playing" : "stopped");
+        s.preset = "acid-steps";
+        s.seconds = 4.0;
+        for (int i = 0; i < 16; ++i)
+            s.events.push_back ({ (uint64_t) (2048 + i * 11008), Event::noteOn, "", (double) (36 + (i * 7) % 16) });
+        s.events.push_back ({ 96000, Event::noteOn, "", 41.0 }); // 1/16 at 120 BPM: step 17's frame
+        s.events.push_back ({ 96000, Event::noteOn, "", 46.0 });
+        for (auto kind : { Event::noteOn, Event::noteOn, Event::noteOff })
+            s.events.push_back ({ 150016, kind, "", 39.0 });
+        if (! playing)
+            s.transport = [] (uint64_t, double, double) -> std::pair<bool, double> { return { false, 0.0 }; };
+        list.push_back (s);
+    }
+    Scenario keys;
+    keys.name = "pads-keys-run-stop";
+    keys.preset = "acid-steps"; // Quantize Minor Pent, Pitch and Vel > Cutoff
+    keys.values = { { "Run", 0.0 } };
+    keys.seconds = 4.0;
+    for (int i = 0; i < 20; ++i)
+        keys.events.push_back ({ (uint64_t) (1000 + i * 9000), Event::noteOn, "", (double) (36 + (i * 5) % 37) });
+    list.push_back (keys);
     return list;
 }
 } // namespace
