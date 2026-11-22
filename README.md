@@ -1,12 +1,12 @@
-# Anvil
+# hdslave Anvil
 
-An 8-step analog-style percussion synthesizer as a CLAP plug-in, built for the Akai MPC Sample running Melodee
-(64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`). It follows the front panel and normalled signal flow of the Moog DFAM and the
-Behringer Edge, without the patch bay, plus one new control: **VCO EG > FM 1-2 Amt**.
+**An 8-step analog-style percussion synthesizer (DFAM / Edge panel & flow) as a CLAP plug-in for the Akai MPC Sample.**
 
-Its sequencer is its own (8 steps of pitch and velocity, or fewer: Length), clocked by the host: steps fall on the
-host's beat grid, swung if you like, while the host plays, stop when it stops, and start again from the song's place
-when it starts or jumps.
+![Anvil custom screen running in hdslaveOS](docs/anvil-screen.gif)
+
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+
+Its 8-step pitch and velocity sequencer (with variable Length and host swing) locks tightly to the host transport: steps fall on the beat grid while playing, stop on stop, and follow song jumps. Under **hdslaveOS**, Anvil draws its own live step-bar and velocity screen directly on the MPC Sample (see [The screen](#the-screen)).
 
 ## Signal flow
 
