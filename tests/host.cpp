@@ -738,6 +738,66 @@ void testButtonsAndNotes()
     CHECK (hits.size() == 4 && std::labs ((hits[1] - 12000) - (hits[0] - 3840)) <= 1 && std::labs ((hits[3] - 36000) - (hits[0] - 3840)) <= 1);
 }
 
+// A new instance whose very first block already plays (added while the song runs, or a host whose first call plays)
+// plays exactly as one that waited a stopped block first: its defaults are no press of Run, so there is no step at
+// once and no second step on the first clock, and the sequence is where the song puts it. Run switched on on a
+// clock's own frame (with Play, or later) plays that clock's step, once.
+void testFirstPlay()
+{
+    std::vector<float> l, r, fresh, waited;
+    for (double start : { 0.0, 2.3, 4.0 })
+    {
+        const auto from = [start] (uint64_t at) { return playingFrom (start, 120.0, 48000.0, at); };
+        Instance a; // no stopped block: its first block plays
+        a.render (48000 * 3, 128, fresh, r, from);
+        Instance b; // a stopped block first
+        b.render (128, 128, l, r, [] (uint64_t) { return Transport { false, 120.0, 0.0 }; });
+        b.render (48000 * 3, 128, waited, r, from);
+        CHECK (fresh == waited);
+        CHECK (onsets (fresh).size() == onsets (waited).size());
+    }
+
+    // Run switched on at frame 0 with Play: as if it had been on (one step at frame 0, step 1, the song's).
+    {
+        const auto from = [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); };
+        Instance a;
+        a.setup ({ { "Run", 0.0 } });
+        a.render (48000 * 2, 128, fresh, r, from, [&] (uint64_t at, uint32_t, Events& e) {
+            if (at == 0) a.set (e, "Run", 1.0);
+        });
+        Instance b;
+        b.setup ({ { "Run", 1.0 } });
+        b.render (48000 * 2, 128, waited, r, from);
+        CHECK (fresh == waited);
+    }
+
+    // Run switched on on a later clock's frame (1/8 at 120 BPM: clock 1 at frame 12000), held at step 1 till then:
+    // that clock plays the step the song has there (step 2, velocity 0.6), once; not step 1 (1.0) and step 2 at once.
+    {
+        Instance a;
+        auto held = clickPatch (a);
+        held.push_back ({ "Run", 0.0 });
+        a.setup (held);
+        a.render (48000, 128, fresh, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); },
+                  [&] (uint64_t at, uint32_t, Events& e) {
+                      if (at == 12000 - 12000 % 128) e.param (12000 % 128, a.id ("Run"), 1.0);
+                  });
+        Instance b;
+        b.setup (clickPatch (b));
+        b.render (48000, 128, waited, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+        const auto hits = onsets (fresh);
+        CHECK (! hits.empty() && hits[0] >= 12000 && hits[0] < 12000 + 48);
+        auto peak = [] (const std::vector<float>& x, long from, long to) {
+            float p = 0.0f;
+            for (long i = from; i < to; ++i) p = std::max (p, std::fabs (x[(size_t) i]));
+            return p;
+        };
+        // Step 1's hit at frame 0 in the instance that ran from the top is velocity 1.0, step 2's at 12000 is 0.6.
+        const float step1 = peak (waited, 0, 6000), step2 = peak (waited, 12000, 18000), got = peak (fresh, 12000, 18000);
+        CHECK (step1 > 0.0f && std::fabs (got / step1 - step2 / step1) < 0.05f);
+    }
+}
+
 void testLengthAndSwing()
 {
     std::vector<float> l, r;
@@ -1436,6 +1496,7 @@ int main (int argc, char** argv)
     testLoopsAndClockChanges();
     testBlockSizes();
     testButtonsAndNotes();
+    testFirstPlay();
     testLengthAndSwing();
     testNotesAndDirection();
     testChanceAndRatchet();

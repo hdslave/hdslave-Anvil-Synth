@@ -130,7 +130,11 @@ page.
   no step played twice, a step passed played at once.
 - Clock Div changed while playing: the steps count on the new grid from there; one due on that frame plays.
 - Run off: the host plays but the sequence holds its step and stays silent; Advance and Trigger work as on the panel.
-  Run on again plays the step it is on at once and goes on from there.
+  Run on again plays the step it is on at once and goes on from there; switched on on a step's own frame (with Play,
+  or on a later step), that step plays, once.
+- Added while the song plays (its first block already playing): it starts where the song is, as any Play does. Before
+  0.5.3 a new instance's own defaults counted as a press of Run, so a first block that already played sounded steps 1
+  and 2 at once and ran a step ahead until the next Play from a stop.
 - In Melodee, keep the plug-in's **TRANSPORT** on (the default): with it off the plug-in never hears Play.
 
 ## Where values were inferred
@@ -189,7 +193,8 @@ pictures in `build/screen-*.png`);
 Ratchet (three hits a step, evenly spaced); the patch routings (each the same sound as turning Cutoff as far, from the
 second step; at 0 they change nothing; VCF EG > VCO 2 bending VCO 2); velocity and tails; a softer step or note in a
 louder one's attack (on its frame, half a millisecond later, and inside the slow VCA attack at 1/32) leaving its
-peak, to the bit; VCO pitch, step pitch on each Seq Pitch
+peak, to the bit; a first block that already plays (at the song's top, mid-step, on a later step) sounding as one
+that waited a stopped block, to the bit, and Run switched on on a step's frame playing it once; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
 
 `tests/fingerprint.cpp` then renders 60 fixed scenarios (each preset, the bench's patches, 24 random patches with the

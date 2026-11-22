@@ -311,6 +311,9 @@ public:
         clockedAt = -(int64_t (1) << 40); // no clock played yet
         clockedLoud = false;
         ratchetsLeft = 0;
+        // A Run "press" made before this (the defaults switching Run on as the plug-in is made, a flush while
+        // inactive) is no press: a first block that already plays starts where the song is, as any Play does.
+        runPressed = false;
         dirty = true;
         retarget();
         for (int i = 0; i < smoothed; ++i)
@@ -410,12 +413,6 @@ public:
                 }
                 run = (uint32_t) std::min<uint64_t> (run, ratchetNext - now);
             }
-            if (runPressed)
-            {
-                runPressed = false;
-                if (playing)
-                    fire(), aligned = true;
-            }
             if (playing)
             {
                 if (regridWanted)
@@ -424,6 +421,8 @@ public:
                 const double ahead = (next - position) / perFrame;
                 if (ahead <= clockSlack)
                 {
+                    // Run switched on on a clock's own frame (with Play, or later): the clock plays its step, once.
+                    runPressed = false;
                     ++lastStep;
                     clock (lastStep);
                     continue;
@@ -431,6 +430,13 @@ public:
                 const double untilStep = std::ceil (ahead - clockSlack);
                 if (untilStep < (double) run)
                     run = (uint32_t) untilStep;
+            }
+            if (runPressed)
+            {
+                // Run switched on between clocks: the step it holds plays at once, and the clock goes on from it.
+                runPressed = false;
+                if (playing)
+                    fire(), aligned = true;
             }
             sound (left, right, run);
             now += run;
