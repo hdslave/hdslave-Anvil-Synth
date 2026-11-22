@@ -58,7 +58,14 @@ struct Plugin
     int shownStep = -1;
     uint32_t shownHits = 0;
     bool shownRunning = false;
+    // The page animates while the song plays, and for screenRestMs after it is opened, touched or a pot moves; left
+    // alone while stopped it rests (asks for no next paint), and Play, a hit, a value or any input wakes it. Main
+    // thread only (paint and input), like the page itself.
+    uint64_t screenBusyMs = 0;
+    bool screenTouched = true;
+    int16_t shownPots[3] { -2, -2, -2 };
 };
+constexpr uint64_t screenRestMs = 4000;
 
 Plugin& of (const clap_plugin* p) { return *static_cast<Plugin*> (p->plugin_data); }
 
@@ -583,8 +590,15 @@ bool screenPaint (const clap_plugin* plugin, const melodee_screen_canvas_t* c)
     const hdui::Host h = hostOf (c);
     p.screen.update (h.nowMs);
     const bool drew = p.screen.paint (h, c->pixels, (int) c->stride, c->whole);
-    // Melodee can keep painting while the idle instrument sleeps.
-    if (p.hostScreen != nullptr)
+    bool busy = p.screenTouched || c->whole || c->playing;
+    for (int k = 0; k < 3; ++k)
+        if (c->knobs[k].position != p.shownPots[k])
+            p.shownPots[k] = c->knobs[k].position, busy = true;
+    p.screenTouched = false;
+    if (busy)
+        p.screenBusyMs = h.nowMs;
+    // The next pose while something moves (Melodee keeps painting while the idle instrument sleeps); at rest, none.
+    if (p.hostScreen != nullptr && (h.nowMs < p.screenBusyMs || h.nowMs - p.screenBusyMs < screenRestMs))
         p.hostScreen->request_paint (p.host);
     return drew;
 }
@@ -594,6 +608,7 @@ bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
     if (e == nullptr || e->kind > MELODEE_SCREEN_NUDGE)
         return false;
     auto& p = of (plugin);
+    p.screenTouched = true; // the page animates again from its next paint
     hdui::Edits edits;
     const bool used = p.screen.input ((hdui::Key) e->kind, e->value, e->shift, edits);
     bool changed = false, pressed = false;

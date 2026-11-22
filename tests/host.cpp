@@ -757,9 +757,11 @@ void testFirstPlay()
         CHECK (onsets (fresh).size() == onsets (waited).size());
     }
 
-    // Run switched on at frame 0 with Play: as if it had been on (one step at frame 0, step 1, the song's).
+    // Run switched on at frame 0 with Play: as if it had been on (one step at frame 0, step 1, the song's). From beat 2.3
+    // too, between clocks: the song's place decides, not the held step.
+    for (double start : { 0.0, 2.3 })
     {
-        const auto from = [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); };
+        const auto from = [start] (uint64_t at) { return playingFrom (start, 120.0, 48000.0, at); };
         Instance a;
         a.setup ({ { "Run", 0.0 } });
         a.render (48000 * 2, 128, fresh, r, from, [&] (uint64_t at, uint32_t, Events& e) {
@@ -1125,6 +1127,29 @@ void testSofterStepInAttack()
                          firstDifference (l, alone), loudest (l), loudest (alone));
         CHECK (firstDifference (l, alone) >= 1280 + 47 && loudest (l) > loudest (alone) * 0.999f);
     }
+    // Two steps on one frame, the louder sent first or second (step 1 at 1.0, step 2 at 0.4, pitched up a fifth, Vel >
+    // Cutoff on): the louder plays whole, its pitch and cutoff too, whatever order the host sends them in.
+    auto pair = [&] (bool louderFirst, bool both, std::vector<float>& out) {
+        Instance a;
+        auto p = patch (a, "Fast");
+        p.push_back ({ "Notes", a.valueOf ("Notes", "Steps") });
+        p.push_back ({ "Pitch 2", 7.0 });
+        p.push_back ({ "Vel > Cutoff", 0.5 });
+        a.setup (p);
+        a.render (12000, 128, out, r, [] (uint64_t) { return Transport { false, 120.0, 0.0 }; }, [&] (uint64_t at, uint32_t n, Events& e) {
+            if (1280 < at || 1280 >= at + n)
+                return;
+            const uint32_t t = (uint32_t) (1280 - at);
+            if (louderFirst) e.note (t, CLAP_EVENT_NOTE_ON, 36, 1.0);
+            if (both) e.note (t, CLAP_EVENT_NOTE_ON, 37, 0.4);
+            if (! louderFirst) e.note (t, CLAP_EVENT_NOTE_ON, 36, 1.0);
+        });
+    };
+    std::vector<float> loudAlone, loudFirst, loudSecond;
+    pair (true, false, loudAlone);
+    pair (true, true, loudFirst);
+    pair (false, true, loudSecond);
+    CHECK (loudest (loudAlone) > 0.3f && loudFirst == loudAlone && loudSecond == loudAlone);
     // VCA EG Slow (100 ms to the peak) at 1/32 (62.5 ms a step at 120 BPM): step 1 at velocity 1, step 2 at 0.6 while
     // step 1 still rises. Step 1 reaches its full peak, as with both steps at 1.
     auto steps = [&] (double second, std::vector<float>& out) {
@@ -1386,6 +1411,13 @@ void testScreen (const std::string& folder)
     CHECK (paint());
     CHECK (paints > before);
     CHECK (! paint());
+    // Stopped and left alone for 4 s, the page rests: it asks for no next paint (battery). Opened again, it animates.
+    now += 4600;
+    before = paints;
+    paint();
+    CHECK (paints == before);
+    paint (true);
+    CHECK (paints > before);
     // A value moved from outside the page (a pot, automation, a preset) asks for a paint, which shows it.
     before = paints;
     a.setup ({ { "Cutoff", 0.3 } });

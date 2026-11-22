@@ -538,6 +538,9 @@ private:
 
     void relocate (double beats, double window, bool jumped)
     {
+        // Play and jumps line the sequence up with the song by themselves: a Run switched on in the same block does not
+        // also play the held step (which would leave the clock following it instead of the song's place).
+        runPressed = false;
         const int64_t b = clockAtOrBefore (beats);
         const double late = (beats - clockBeat (b)) / perFrame; // frames since the host's step b began
         position = beats;
@@ -593,6 +596,11 @@ private:
 
     void fireStep (int s, float v)
     {
+        // Two steps on one frame (two pads at once, in whatever order the host sends them): the louder plays, whole (its
+        // pitch, cutoff and decays as well as its level); on a tie the later.
+        if (firedAt == now && v < firedLevel)
+            return;
+        firedAt = now, firedLevel = v;
         ++played;
         heldPitch = knob[ParamId::pitch1 + s];
         stepLevel = v;
@@ -768,6 +776,8 @@ private:
     uint32_t played = 0; // hits played (for the screen)
     // Ratchet: the hits left in this step, and when the next comes (frames since prepare()).
     uint64_t now = 0, ratchetFrom = 0, ratchetNext = 0;
+    uint64_t firedAt = ~(uint64_t) 0; // the frame the last step fired on, and its level
+    float firedLevel = 0.0f;
     int64_t clockedAt = 0;     // the frame the last step's clock came on
     bool clockedLoud = false;  // and whether that step played
     double ratchetGap = 0.0;
