@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.6.0"
+#define ANVIL_VERSION "0.6.1"
 #endif
 
 namespace anvil
@@ -95,6 +95,14 @@ inline const char* const directionChoices[] = { "Forward", "Backward", "Ping-Pon
 // Run on (or Notes: Steps): MIDI notes 36 to 43 (pads 1 to 8 of a plug-in track at hdslaveOS's defaults) play steps 1
 // to 8; every 8 notes up and down, again (pads 9 to 16, notes 44 to 51, are steps 1 to 8 too).
 constexpr int firstStepNote = 36;
+// Run off with Notes: Pitch: the key that plays the Freq knobs as they are set (a step at Pitch 0). Note 36 is pad 1
+// at hdslaveOS's defaults, so pads 1 to 16 play the knobs' pitch and the 15 semitones above it; each key a semitone,
+// lower keys lower. Before 0.6.1 it was middle C (60), which put the default pads two octaves below the knobs.
+constexpr int keyAtKnobs = 36;
+// A choke, or MIDI's All Sound Off (CC 120 at 0): the output fades out over this long (seconds), linearly, so the hit
+// stops without a click; its envelopes are then cleared. The fade is on the output, not in the envelopes' own loop, so
+// a block that chokes nothing costs the same as before.
+constexpr float chokeSeconds = 0.0015f;
 // The patch routings at full turn: velocity moves the cutoff 4 octaves; the VCF EG moves VCO 2 as far as a VCO EG
 // Amt does (8 octaves); a step's pitch moves the cutoff by as much as it moves the VCO (1:1 tracking).
 constexpr float velCutoffOctaves = 4.0f, vcfEgVco2Octaves = 8.0f;

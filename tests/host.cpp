@@ -1686,16 +1686,16 @@ void testPads()
         const auto hits = onsets (offs);
         CHECK (offs == none && hits.size() == 2 && hits[0] >= 1280 && hits[0] < 1280 + 48 && hits[1] >= 12800 && hits[1] < 12800 + 48);
     }
-    // MIDI's own note-on (a host with the MIDI dialect) plays the same; velocity 0 is a note-off; hdslaveOS's silence
-    // (CC 120 and 123 at 0 on every channel, a choke, a note-off) neither plays nor stops a step, nor moves a value.
+    // MIDI's own note-on (a host with the MIDI dialect) plays the same; velocity 0 is a note-off, and a note-off stops
+    // nothing (a hit rings out). A storm with nothing sounding plays nothing and moves no value.
     {
         Instance a, b, c;
         a.setup (padPatch (a));
         b.setup (padPatch (b));
         c.setup (padPatch (c));
         const auto clapNote = run (a, 48000, false, { { 1280, noteOn (38, 1.0) } });
-        const auto midiNote = run (b, 48000, false, { { 1280, midi (0x90, 38, 127) }, { 12800, midi (0x90, 40, 0) }, { 12800, storm (38) },
-                                                      { 25600, storm (38) } });
+        const auto midiNote = run (b, 48000, false, { { 1280, midi (0x90, 38, 127) }, { 12800, midi (0x90, 40, 0) },
+                                                      { 25600, noteOff (38) } });
         CHECK (midiNote == clapNote);
         double values = 0.0;
         for (auto& [name, id] : c.ids)
@@ -1706,25 +1706,35 @@ void testPads()
             after += c.value (name);
         CHECK (loudest (quiet) == 0.0f && after == values);
     }
-    // Run off, Notes: Pitch (the default): chromatic. Middle C (60) plays the Freq knobs as they are; each key a
-    // semitone, not snapped by Quantize (Major here: 61 would snap to 60 or 62).
-    for (auto [key, hz] : { std::pair<int, double> { 60, 144.0 }, { 72, 288.0 }, { 48, 72.0 }, { 67, 215.8 }, { 61, 152.6 }, { 36, 36.0 } })
+    // Run off, Notes: Pitch (the default): chromatic. Pad 1's key (36) plays the Freq knobs as they are; each key a
+    // semitone, not snapped by Quantize (Major here: 37 would snap to 36 or 38).
+    for (auto [key, hz] : { std::pair<int, double> { 36, 144.0 }, { 48, 288.0 }, { 60, 576.0 }, { 37, 152.6 }, { 72, 1152.0 }, { 24, 72.0 } })
     {
         Instance a;
-        a.setup (padPatch (a, { { "Run", 0.0 }, { "Quantize", a.valueOf ("Quantize", "Major") } }));
+        a.setup (padPatch (a, { { "Run", 0.0 }, { "Quantize", a.valueOf ( "Quantize", "Major") } }));
         const double got = hzAt (run (a, 24000, false, { { 0, noteOn (key, 1.0) } }), 2000);
         if (std::getenv ("ANVIL_DEBUG")) std::printf ("debug key %d: %.1f Hz (want %.1f)\n", key, got, hz);
         CHECK (near (got, hz));
     }
+    // ...and the pitch stays within a step's (-5 octaves: key 96 is as far up as a Pitch knob goes; higher keys play
+    // as 96, to the bit).
+    {
+        Instance a, b, c;
+        a.setup (padPatch (a, { { "Run", 0.0 } }));
+        b.setup (padPatch (b, { { "Run", 0.0 } }));
+        c.setup (padPatch (c, { { "Run", 0.0 } }));
+        CHECK (near (hzAt (run (a, 24000, false, { { 0, noteOn (96, 1.0) } }), 2000), 4608.0));
+        CHECK (run (b, 24000, false, { { 0, noteOn (110, 1.0) } }) == run (c, 24000, false, { { 0, noteOn (96, 1.0) } }));
+    }
     // ...the key as a step of its own: the same, to the bit, as Trigger on a step whose Pitch is the key's distance
-    // from middle C and whose Velocity is the note's (Quantize Off there), through every route.
-    for (auto [key, velocity] : { std::pair<int, double> { 72, 1.0 }, { 48, 0.5 }, { 61, 0.8 } })
+    // from pad 1's key (36) and whose Velocity is the note's (Quantize Off there), through every route.
+    for (auto [key, velocity] : { std::pair<int, double> { 72, 1.0 }, { 48, 0.5 }, { 37, 0.8 } })
     {
         Instance pad, panel;
         const Values routes { { "Run", 0.0 }, { "Seq Pitch Mod", pad.valueOf ("Seq Pitch Mod", "VCO 2") }, { "VCO 1 Level", 0.5 } };
         pad.setup (padPatch (pad, padRoutes (pad) + routes + Values { { "Quantize", pad.valueOf ("Quantize", "Major") } }));
         panel.setup (padPatch (panel, padRoutes (panel) + routes
-                                     + Values { { "Quantize", 0.0 }, { "Pitch 1", (key - 60) / 60.0 }, { "Velocity 1", velocity } }));
+                                     + Values { { "Quantize", 0.0 }, { "Pitch 1", (key - 36) / 60.0 }, { "Velocity 1", velocity } }));
         const auto got = run (pad, 24000, false, { { 1280, noteOn (key, velocity) } });
         CHECK (loudest (got) > 0.05f && got == run (panel, 24000, false, stepByPanel (0, 1280)));
     }
@@ -1734,11 +1744,11 @@ void testPads()
         Instance a;
         a.setup (padPatch (a, { { "Run", 0.0 } }));
         const auto l = run (a, 72000, false, { { 0, noteOn (72, 1.0) }, { 24000, value ("Trigger", 1.0) } });
-        CHECK (near (hzAt (l, 2000), 288.0) && near (hzAt (l, 26000), padHz (0)));
+        CHECK (near (hzAt (l, 2000), 1152.0) && near (hzAt (l, 26000), padHz (0)));
         Instance b;
         b.setup (padPatch (b, { { "Run", 0.0 }, { "Quantize", b.valueOf ("Quantize", "Major") } }));
         const auto m = run (b, 48000, false, { { 0, noteOn (48, 1.0) }, { 24000, value ("Advance", 1.0) } });
-        CHECK (near (hzAt (m, 2000), 72.0) && near (hzAt (m, 26000), 144.0 * std::exp2 (7.0 / 12.0)));
+        CHECK (near (hzAt (m, 2000), 288.0) && near (hzAt (m, 26000), 144.0 * std::exp2 (7.0 / 12.0)));
     }
     // Run off, Notes: Steps: the pads play the steps, as before 0.6 (Pad Kit's way: its eight drums on the pads alone).
     {
@@ -1804,6 +1814,132 @@ void testPads()
     }
 }
 
+// 0.6.1: a choke, and MIDI's All Sound Off (CC 120 at 0), stop the hit that sounds: a choke of the key that played it,
+// or (key -1, and All Sound Off) whatever sounds, on any channel; the hit fades out in 1.5 ms, no click, and the
+// Ratchet hits still to come in its step do not play. A note-off, Reset All Controllers (121) and All Notes Off (123)
+// stop nothing (no key is held and there is no pedal), and no controller is a parameter. A sequencer hit, Trigger's and
+// the page's, has no key: a key's choke leaves it, key -1 and All Sound Off stop it. The sequence's place and Run do
+// not move: the next step plays as ever, and a hit after a choke on the same frame plays (it is no second step there).
+namespace
+{
+Act chokeKey (int key) { return [=] (Instance&, Events& e, uint32_t t) { e.note (t, CLAP_EVENT_NOTE_CHOKE, (int16_t) key, 0.0); }; }
+float peakIn (const std::vector<float>& x, size_t from, size_t to)
+{
+    float m = 0.0f;
+    for (size_t i = from; i < std::min (to, x.size()); ++i) m = std::max (m, std::fabs (x[i]));
+    return m;
+}
+bool sameTo (const std::vector<float>& a, const std::vector<float>& b, size_t n)
+{
+    return a.size() >= n && b.size() >= n && std::equal (a.begin(), a.begin() + (long) n, b.begin());
+}
+} // namespace
+
+void testChokes()
+{
+    const uint64_t hit = 1280, cut = 12800, done = cut + 480; // 10 ms after the choke: the 1.5 ms fade is over
+    // A key's hit: the choke of that key stops it (silence after the fade), and the sound up to the choke is the same
+    // to the bit as without it. A choke of another key, a note-off, Reset All Controllers and All Notes Off stop nothing.
+    {
+        Instance a, b;
+        a.setup (padPatch (a));
+        b.setup (padPatch (b));
+        const auto plain = run (a, 48000, false, { { hit, noteOn (38, 1.0) } });
+        const auto choked = run (b, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) } });
+        CHECK (peakIn (plain, done, plain.size()) > 0.01f && peakIn (choked, done, choked.size()) < 1e-4f);
+        CHECK (sameTo (choked, plain, cut));
+        for (auto act : { chokeKey (40), noteOff (38), midi (0xb0, 121, 0), midi (0xb0, 123, 0), midi (0xb0, 120, 64) })
+        {
+            Instance c, d;
+            c.setup (padPatch (c));
+            d.setup (padPatch (d));
+            CHECK (run (c, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, act } }) == run (d, 48000, false, { { hit, noteOn (38, 1.0) } }));
+        }
+    }
+    // All Sound Off, on any channel, stops it as a choke of its key does; and key -1, a host's choke of everything.
+    {
+        Instance a, b;
+        a.setup (padPatch (a));
+        b.setup (padPatch (b));
+        const auto midiOff = run (a, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, midi (0xb5, 120, 0) } });
+        const auto all = run (b, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (-1) } });
+        CHECK (midiOff == all && peakIn (midiOff, done, midiOff.size()) < 1e-4f);
+    }
+    // A sequencer's hit has no key: a key's choke leaves it (only the keys' hits are held to the silence, as the host
+    // makes one choke for each key played); key -1 and All Sound Off stop it.
+    {
+        Instance a, b;
+        a.setup (padPatch (a));
+        b.setup (padPatch (b));
+        const auto plain = run (a, 48000, false, { { hit, value ("Trigger", 1.0) } });
+        CHECK (run (b, 48000, false, { { hit, value ("Trigger", 1.0) }, { cut, chokeKey (38) } }) == plain);
+        Instance c, d;
+        c.setup (padPatch (c));
+        d.setup (padPatch (d));
+        CHECK (peakIn (run (c, 48000, false, { { hit, value ("Trigger", 1.0) }, { cut, chokeKey (-1) } }), done, 48000) < 1e-4f);
+        CHECK (peakIn (run (d, 48000, false, { { hit, value ("Trigger", 1.0) }, { cut, storm (38) } }), done, 48000) < 1e-4f);
+    }
+    // The Ratchet hits still to come in the step do not play: three a step (the click patch, quarters at 120 BPM: a
+    // hit every 4,000 frames), the first step's cut by a choke after its first hit leaves one where it would have three,
+    // and the steps after it play as ever.
+    {
+        Instance a, b;
+        for (Instance* x : { &a, &b })
+        {
+            auto p = clickPatch (*x);
+            p.push_back ({ "Ratchet", 3.0 });
+            p.push_back ({ "VCA Decay", 0.0 });
+            x->setup (p);
+        }
+        const auto all = onsets (run (a, 24000, true, {}), 1e-3f, 1e-4f, 96);
+        const auto one = onsets (run (b, 24000, true, { { 1000, chokeKey (-1) } }), 1e-3f, 1e-4f, 96);
+        if (std::getenv ("ANVIL_DEBUG")) std::printf ("debug ratchet: %zu onsets plain, %zu choked\n", all.size(), one.size());
+        CHECK (all.size() == 6 && one.size() == 4 && one[0] == all[0]);
+        bool spaced = one.size() == 4;
+        for (size_t i = 1; spaced && i < one.size(); ++i) // the first step's three are now one (frames 0, 2000, 4000)
+            spaced = one[i] == all[i + 2];
+        CHECK (spaced);
+    }
+    // A choke and a hit on one frame: in event order. The choke first, the hit plays; the hit first, the choke fades
+    // what it just started (and the hit after it on that frame plays).
+    {
+        Instance a, b, c;
+        a.setup (padPatch (a));
+        b.setup (padPatch (b));
+        c.setup (padPatch (c));
+        CHECK (run (a, 24000, false, { { hit, chokeKey (38) }, { hit, noteOn (38, 1.0) } })
+               == run (c, 24000, false, { { hit, noteOn (38, 1.0) } }));
+        CHECK (peakIn (run (b, 24000, false, { { hit, noteOn (38, 1.0) }, { hit, chokeKey (38) } }), hit + 480, 24000) < 1e-4f);
+    }
+    // A hit while the fade runs: it plays, from where the envelopes are (a new hit, not a second step).
+    {
+        Instance a, b;
+        a.setup (padPatch (a));
+        b.setup (padPatch (b));
+        const auto again = run (a, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) }, { cut + 16, noteOn (40, 1.0) } });
+        CHECK (peakIn (again, done, again.size()) > 0.01f);
+        CHECK (peakIn (run (b, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) } }), done, 48000) < 1e-4f);
+    }
+    // The same output in blocks of 128, 37, 1 and 4096 frames with chokes, All Sound Off and a hit in a fade.
+    {
+        const Timeline busy { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) }, { cut + 16, noteOn (40, 1.0) }, { 20000, midi (0xb3, 120, 0) },
+                              { 24000, noteOn (39, 1.0) }, { 30001, value ("Trigger", 1.0) }, { 36000, chokeKey (-1) },
+                              { 42000, noteOn (41, 1.0) }, { 42000, storm (41) }, { 48000, noteOn (44, 1.0) } };
+        std::vector<float> first;
+        for (uint32_t block : { 128u, 37u, 1u, 4096u })
+        {
+            Instance a;
+            a.setup (padPatch (a, padRoutes (a)));
+            const auto l = run (a, 72000, false, busy, block);
+            if (block == 128)
+                first = l;
+            else
+                CHECK (l == first);
+        }
+        CHECK (loudest (first) > 0.05f);
+    }
+}
+
 int main (int argc, char** argv)
 {
     if (argc < 3)
@@ -1844,6 +1980,7 @@ int main (int argc, char** argv)
     testQuantize();
     testScreen (argv[2]);
     testPads();
+    testChokes();
     testExtremes();
     demos (argv[2]);
     entry->deinit();

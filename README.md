@@ -4,7 +4,7 @@
 
 ![Anvil custom screen running in hdslaveOS](docs/anvil-screen.gif)
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.0). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.1). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 Its 8-step pitch and velocity sequencer (with variable Length and host swing) locks tightly to the host transport: steps fall on the beat grid while playing, stop on stop, and follow song jumps. Under **hdslaveOS**, Anvil draws its own live step-bar and velocity screen directly on the MPC Sample (see [The screen](#the-screen)).
 
@@ -81,13 +81,21 @@ On a plug-in track at hdslaveOS's defaults (octave 2, key C, Chromatic) pads 1�
   sequence does not move: the next step is the one it would have been. The pad's pitch holds until the sequence's next
   step (or Trigger, or Advance) replaces it.
 - **Run off: the pads play notes** (Notes: Pitch, the default). A key plays the voice as a step of its own: its Pitch
-  is the key's distance from middle C (note 60 plays the Freq knobs as they are; the default pads, 36–51, run from two
-  octaves below it to nine semitones below it), its velocity the note's, through the same routes (Seq Pitch Mod,
-  Pitch > Cutoff, Vel > Cutoff, VCF EG > VCO 2), not snapped by Quantize. The sequence does not move. With Notes: Steps
-  the pads play the steps, as with Run on.
+  is the key's distance from pad 1's note (36, which plays the Freq knobs as they are; pads 1–16 run from there to 15
+  semitones above it, and keys below 36 lower), its velocity the note's, through the same routes (Seq Pitch Mod,
+  Pitch > Cutoff, Vel > Cutoff, VCF EG > VCO 2), not snapped by Quantize. The pitch stops at a step's ±5 octaves (key
+  96; higher keys play as 96). The sequence does not move. With Notes: Steps the pads play the steps, as with Run on.
 - Two pads on one frame (hdslaveOS sends a block's MIDI on its first frame) play the louder, whole; on a tie the later.
-  A pad on a step's own frame is such a pair too. A pad pressed again plays again; note-offs, chokes and hdslaveOS's
-  silence (CC 120 / 123) change nothing: each hit rings out, as a step does.
+  A pad on a step's own frame is such a pair too. A pad pressed again plays again; a note-off changes nothing: each hit
+  rings out, as a step does.
+- A **choke** (a CLAP note choke, or a host's choke group) and MIDI's **All Sound Off** (CC 120 at 0, on any channel)
+  stop the hit that sounds: the choke of the key that played it, or key −1 / All Sound Off, whatever sounds; the output
+  fades out in 1.5 ms, without a click, the hit's envelopes are cleared with it, and its Ratchet hits still to come do
+  not play. A hit inside the fade plays as soon as the fade is out (a pad pressed straight after a silence). hdslaveOS
+  sends them when it silences the track (its note chokes for the keys played), not on Stop. A sequencer step, Trigger's and the page's
+  have no key: a key's choke leaves them, key −1 and All Sound Off stop them. Reset All Controllers (CC 121) and All
+  Notes Off (CC 123) do nothing (no key is held, there is no pedal), and no controller is a parameter. The sequence's
+  place and Run do not move.
 - Trigger (the button) still plays the step the sequence is on, and the STEPS page's Push the step it picks.
 
 ### The new control
@@ -180,7 +188,7 @@ Instructions a 128-frame block takes, from `tools/bench.sh` (callgrind):
 
 | Case | Instructions | Share of one A55 core at 1 instruction a cycle |
 |---|---|---|
-| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 81,000 | 1.7 % |
+| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 82,000 | 1.7 % |
 | A short percussive pattern | about 76,000 | 1.6 % |
 | Stopped | about 600 | 0.01 % |
 
@@ -210,10 +218,14 @@ block; the same output whatever the block size (1, 37,
 the pads (with Run on, each of notes 36 to 51 the same, to the bit, as Trigger on its step, with the transport stopped,
 Quantize, Chance 0 and the routes on, and by the pitch heard, also while the host plays; the sequence not moved, the
 next step's pitch its own; a pad on Play's frame, softer, tied or louder; two pads on one frame, either order and tied;
-on/on/off of one pad; MIDI note-ons, velocity 0 and hdslaveOS's CC 120 / 123 and choke storm; with Run off, Notes: Pitch
-playing keys chromatically by the pitch heard, not snapped by Quantize, and to the bit as a step of their own through
-every route, two keys on one frame, Trigger and Advance afterwards; Notes: Steps and Pad Kit with Run off; the page's
-Push with Run off; the same output in blocks of 1, 37, 128 and 4096 frames);
+on/on/off of one pad; MIDI note-ons, velocity 0 and a silence storm with nothing sounding; with Run off, Notes: Pitch
+playing keys chromatically by the pitch heard (pad 1's note 36 at the knobs, a key a semitone, not snapped by Quantize,
+the ±5 octaves of a step's Pitch), and to the bit as a step of their own through every route, two keys on one frame,
+Trigger and Advance afterwards; Notes: Steps and Pad Kit with Run off; the page's Push with Run off; the same output in
+blocks of 1, 37, 128 and 4096 frames); a choke stopping the key's hit (and not another key's, nor the sequencer's: key
+−1 and All Sound Off stop that), All Sound Off on any channel, Reset All Controllers and All Notes Off changing
+nothing, the Ratchet hits after a choke gone, a choke and a hit on one frame in event order, a hit inside the fade, and
+the same output in blocks of 1, 37, 128 and 4096 frames with chokes in it;
 each Direction (the order read back from the steps' levels; Random the same twice); Chance (0 %, 50 % the same twice);
 Quantize (each scale's note from the pitch heard; the Pitch texts by it, and the host asked to read them again); the
 screen's page (it draws, picks and plays a step, its controls set the values the host then hears, its buttons press;

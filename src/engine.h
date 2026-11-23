@@ -285,6 +285,7 @@ public:
         rate = hostRate;
         inner = (float) (2.0 * hostRate);
         invInner = 1.0f / inner;
+        chokeStep = (float) (1.0 / std::max (1.0, std::round ((double) chokeSeconds * rate))); // the fade's share a sample
         decimator.design();
         // Pink noise: three one-pole filters on white (Paul Kellet's), their poles moved from 44.1 kHz to this rate.
         const float poles[3] = { 0.99765f, 0.96300f, 0.57000f };
@@ -311,6 +312,8 @@ public:
         clockedAt = -(int64_t (1) << 40); // no clock played yet
         clockedLoud = false;
         ratchetsLeft = 0;
+        hitKey = -1;
+        fadeGain = 1.0f, fadeStep = 0.0f, chokedSinceHit = false;
         // A Run "press" made before this (the defaults switching Run on as the plug-in is made, a flush while
         // inactive) is no press: a first block that already plays starts where the song is, as any Play does.
         runPressed = false;
@@ -357,24 +360,35 @@ public:
     void note (int key, float velocity)
     {
         if (knob[ParamId::run] >= 0.5f || knob[ParamId::noteMode] >= 0.5f)
-            playStep (((key - firstStepNote) % 8 + 8) % 8, velocity);
+            playStep (((key - firstStepNote) % 8 + 8) % 8, velocity, key);
         else
             playKey (key, velocity);
     }
 
-    // A note plays step `s` at once, at its pitch and velocity (times the note's), without moving the sequence.
-    void playStep (int s, float velocity)
+    // A note plays step `s` at once, at its pitch and velocity (times the note's), without moving the sequence. `key`:
+    // the note's (-1: the page's Push, no note), for a choke.
+    void playStep (int s, float velocity, int key = -1)
     {
-        fireStep (s & 7, knob[ParamId::velocity1 + (s & 7)] * velocity);
+        fireStep (s & 7, knob[ParamId::velocity1 + (s & 7)] * velocity, key);
     }
 
-    // Notes: Pitch with Run off: the voice plays at once as a step whose Pitch is the key's distance from middle C
-    // (key 60 plays the Freq knobs as they are) and whose velocity is the note's, through the routes a step's pitch
-    // and velocity take (Seq Pitch Mod, Pitch > Cutoff, Vel > Cutoff ...), not snapped by Quantize; the sequence
-    // does not move.
+    // Notes: Pitch with Run off: the voice plays at once as a step whose Pitch is the key's distance from keyAtKnobs
+    // (note 36, pad 1, plays the Freq knobs as they are; each key a semitone) and whose velocity is the note's,
+    // through the routes a step's pitch and velocity take (Seq Pitch Mod, Pitch > Cutoff, Vel > Cutoff ...), not
+    // snapped by Quantize; the sequence does not move. The pitch stays within what a step's Pitch knob reaches (+-5
+    // octaves: keys 0 to 96; higher keys play as 96), so no route sees more than a step could give it.
     void playKey (int key, float velocity)
     {
-        strike ((float) (key - 60) / (seqPitchOctaves * 12.0f), true, velocity);
+        strike (clampf ((float) (key - keyAtKnobs) / (seqPitchOctaves * 12.0f), -1.0f, 1.0f), true, velocity, key);
+    }
+
+    // A choke (a CLAP note choke; hdslaveOS makes one of its silence for each key played): the hit key `key` played
+    // stops, if it is the one sounding (the sequencer's hits, Trigger's and the page's have no key); key -1, whatever
+    // sounds. MIDI's All Sound Off (CC 120 at 0) is choke (-1).
+    void choke (int key)
+    {
+        if (key < 0 || key == hitKey)
+            stop();
     }
 
     // Where the sequence's own count is: for a host that gives no song position (0 when it last stopped).
@@ -606,17 +620,19 @@ private:
     // it). A louder step also decays a little longer.
     void fire() { fireStep (stepIndex, knob[ParamId::velocity1 + stepIndex]); }
 
-    void fireStep (int s, float v) { strike (knob[ParamId::pitch1 + s], false, v); }
+    void fireStep (int s, float v, int from = -1) { strike (knob[ParamId::pitch1 + s], false, v, from); }
 
     // A hit at `pitch` (a step's Pitch knob, -1..1 for +-5 octaves; `key`: a played key's, which Quantize leaves as it
-    // is) and level `v`.
-    void strike (float pitch, bool key, float v)
+    // is) and level `v`; `from`: the MIDI key that struck it (-1: none), for a choke.
+    void strike (float pitch, bool key, float v, int from)
     {
         // Two steps on one frame (two pads at once, in whatever order the host sends them): the louder plays, whole (its
         // pitch, cutoff and decays as well as its level); on a tie the later.
         if (firedAt == now && v < firedLevel)
             return;
         firedAt = now, firedLevel = v;
+        hitKey = from;
+        chokedSinceHit = false; // a hit after a choke: the fade is no longer its
         ++played;
         heldPitch = pitch;
         heldKey = key, heldQuantize = key ? 0.0f : knob[ParamId::quantize];
@@ -634,6 +650,19 @@ private:
         vcoEg.trigger (v);
         vcfEg.trigger (v);
         vcaEg.trigger (v);
+    }
+
+    // A choke or All Sound Off: the hit sounding fades out (the output, straight down to zero over chokeSeconds: a
+    // sample's share of it, at the host's rate), its envelopes are cleared once it is out, and the Ratchet hits still
+    // to come in this step do not play. The sequence's place and Run are untouched: the next step plays as ever. A hit
+    // after it on the same frame plays: it is no softer second hit of that frame.
+    void stop()
+    {
+        if (fadeStep == 0.0f) // a second choke inside the fade: it goes on from where it is
+            fadeGain = 1.0f, fadeStep = chokeStep;
+        chokedSinceHit = true;
+        ratchetsLeft = 0;
+        firedAt = ~(uint64_t) 0;
     }
 
     // A decay's multiplier a sample: -60 dB over its time. An attack's charge a sample: at the peak in `seconds`
@@ -739,6 +768,17 @@ private:
                 // A soft ceiling, so a hot patch rounds off instead of clipping.
                 y = tanhFast (decimator.push (a, b)) * 0.98f;
             }
+            if (fadeStep != 0.0f)
+            {
+                y *= fadeGain;
+                fadeGain -= fadeStep;
+                if (fadeGain <= 0.0f) // out: the envelopes cleared, as a hit that never was (unless one struck since)
+                {
+                    fadeGain = 1.0f, fadeStep = 0.0f;
+                    if (chokedSinceHit)
+                        vcoEg = vcfEg = vcaEg = Envelope {};
+                }
+            }
             left[i] = y;
             if (right)
                 right[i] = y;
@@ -783,6 +823,9 @@ private:
 
     double rate = 48000.0, perFrame = 0.0, position = 0.0;
     float inner = 96000.0f, invInner = 1.0f / 96000.0f;
+    float chokeStep = 1.0f / 72.0f;   // a choke's fade: the share of the output it takes off a sample (prepare())
+    float fadeGain = 1.0f, fadeStep = 0.0f; // a choke's fade, while it runs (0: none)
+    bool chokedSinceHit = false;      // the hit sounding was choked and none has struck since
     float knob[ParamId::count] {};
     float target[smoothed] {}, smooth[smoothed] {};
     float heldPitch = 0.0f, velocityLonger = 1.0f, stepLevel = 0.0f;
@@ -798,6 +841,7 @@ private:
     uint64_t now = 0, ratchetFrom = 0, ratchetNext = 0;
     uint64_t firedAt = ~(uint64_t) 0; // the frame the last step fired on, and its level
     float firedLevel = 0.0f;
+    int hitKey = -1;           // the MIDI key that struck the hit sounding (-1: the sequencer, a button, the page)
     int64_t clockedAt = 0;     // the frame the last step's clock came on
     bool clockedLoud = false;  // and whether that step played
     double ratchetGap = 0.0;

@@ -217,11 +217,24 @@ void handle (Plugin& p, const clap_event_header* e, const clap_output_events* ou
                 p.engine.note (n->key, (float) n->velocity);
             break;
         }
+        case CLAP_EVENT_NOTE_CHOKE:
+        {
+            // A choke (hdslaveOS's silence makes one for each key played; a host's choke group): the hit the key played
+            // stops, fading out in 1.5 ms; key -1, whatever sounds. Anvil plays one hit at a time, so the key says
+            // which (a note off still changes nothing: a hit rings out).
+            p.engine.choke (reinterpret_cast<const clap_event_note*> (e)->key);
+            break;
+        }
         case CLAP_EVENT_MIDI:
         {
+            // Note-ons; and MIDI's All Sound Off (CC 120 at 0, on any channel), which stops whatever sounds. Anvil maps
+            // no controller to a parameter: Reset All Controllers (121) and All Notes Off (123) have nothing to do (no
+            // note is held, no pedal), and no CC moves a value.
             const auto* m = reinterpret_cast<const clap_event_midi*> (e);
             if ((m->data[0] & 0xf0) == 0x90 && m->data[2] > 0)
                 p.engine.note (m->data[1] & 0x7f, (float) (m->data[2] & 0x7f) / 127.0f);
+            else if ((m->data[0] & 0xf0) == 0xb0 && (m->data[1] & 0x7f) == 120 && (m->data[2] & 0x7f) == 0)
+                p.engine.choke (-1);
             break;
         }
         default: break;
