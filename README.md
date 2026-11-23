@@ -6,7 +6,7 @@
 
 > **Desktop version (macOS & Windows):** Looking to run this plug-in on your computer in FL Studio or another CLAP host with an expanded high-resolution control panel and MIDI Learn? Get the full 11-plug-in desktop suite at [**hdslave-Synths-and-drum-machines-Mac-Win**](https://github.com/hdslave/hdslave-Synths-and-drum-machines-Mac-Win).
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.2). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.3). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 Its 8-step pitch and velocity sequencer (with variable Length and host swing) locks tightly to the host transport: steps fall on the beat grid while playing, stop on stop, and follow song jumps. Under **hdslaveOS**, Anvil draws its own live step-bar and velocity screen directly on the MPC Sample (see [The screen](#the-screen)).
 
@@ -29,9 +29,12 @@ steps; with Run off they play notes (see [The pads](#the-pads-midi-notes)).
 
 Not yet run on the MPC itself: tested in hdslaveOS's own CLAP host code (`clap_check`) and this repository's tests.
 
-0.6.2 hardens what a host can send — tempo and sample rate held to sense, a Play landing mid-step the same at every
-block size, a state or preset settling at once instead of gliding, `reset` leaving a fresh engine, non-finite text
-and states from a newer version refused — with the sound otherwise as it was (every fingerprint hash holds).
+0.6.2 hardens what a host can send — a missing or non-finite tempo reads as 120 and a sample rate that is no rate
+as 48 kHz, a Play landing mid-step the same at every block size, a state or preset settling at once instead of
+gliding, `reset` leaving a fresh engine, non-finite text and states from a newer version refused — with the sound
+otherwise as it was (every fingerprint hash holds). 0.6.3 counts a press on the page by the frames rendered since
+it, never by the clock: a press queued while the instrument slept still plays once when it wakes, whether the page
+stayed open or was closed, and none survives a deactivation. The sound is again as it was.
 
 ## Controls
 

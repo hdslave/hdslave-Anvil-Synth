@@ -282,7 +282,7 @@ class Engine
 public:
     void prepare (double hostRate, uint32_t)
     {
-        rate = std::isfinite (hostRate) && hostRate > 0.0 ? hostRate : 48000.0; // a host's word, held to sense
+        rate = std::isfinite (hostRate) && hostRate > 0.0 ? hostRate : 48000.0; // a rate that is no rate reads as 48 kHz
         inner = (float) (2.0 * rate);
         invInner = 1.0f / inner;
         chokeStep = (float) (1.0 / std::max (1.0, std::round ((double) chokeSeconds * rate))); // the fade's share a sample

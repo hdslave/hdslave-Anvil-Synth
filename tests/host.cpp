@@ -1470,19 +1470,34 @@ void testScreen (const std::string& folder)
     CHECK ((knobs() == std::vector<clap_id> { a.id ("Pitch 1"), a.id ("Velocity 1"), a.id ("Cutoff") }));
     CHECK (in (MELODEE_SCREEN_WHEEL, 2));
     CHECK ((knobs() == std::vector<clap_id> { a.id ("Pitch 3"), a.id ("Velocity 3"), a.id ("Cutoff") }));
-    // Push plays step 3 (stopped, nothing else would sound), and asks the host to run the plug-in. A press the host
-    // kept waiting over half a second (an instrument it put to sleep) is dropped, not played late.
+    // Push plays step 3 (stopped, nothing else would sound), and asks the host to run the plug-in. A press's age
+    // counts frames rendered, never wall time: a host asleep between the press and its next block rendered none,
+    // so the press still plays once at that block however long it slept — and no paint retires it, so whether the
+    // page stayed open, or closed at once with no paint between press and wake, cannot change what sounds.
     auto quiet = play (4800, false, 0.0);
     CHECK (std::all_of (quiet.begin(), quiet.end(), [] (float v) { return v == 0.0f; }));
     const int processBefore = processRequests;
     CHECK (in (MELODEE_SCREEN_PUSH, 0));
     CHECK (processRequests > processBefore);
     std::this_thread::sleep_for (std::chrono::milliseconds (600));
-    paint(); // the page paints on while the plug-in waits (as Melodee paints a sleeping instrument's page): there the stale press is retired
+    paint(); // the page paints on while the plug-in sleeps: a paint used to retire the waiting press; it must not
+    auto hit = play (4800, false, 0.0);
+    CHECK (std::any_of (hit.begin(), hit.end(), [] (float v) { return std::fabs (v) > 1e-3f; }));
+    play (48000, false, 0.0); // the hit rings out
+    CHECK (in (MELODEE_SCREEN_PUSH, 0));
+    std::this_thread::sleep_for (std::chrono::milliseconds (600)); // press, page closed (no paint), then the wake:
+    hit = play (4800, false, 0.0);                                  // the same sound as with the page open
+    CHECK (std::any_of (hit.begin(), hit.end(), [] (float v) { return std::fabs (v) > 1e-3f; }));
+    play (48000, false, 0.0);
+    // A press queued across a deactivation is gone: the frame count restarts at activate, and no press of the
+    // old count fires on the new one.
+    CHECK (in (MELODEE_SCREEN_PUSH, 0));
+    a.plugin->deactivate (a.plugin);
+    CHECK (a.plugin->activate (a.plugin, 48000.0, 1, 4096));
     quiet = play (4800, false, 0.0);
     CHECK (std::all_of (quiet.begin(), quiet.end(), [] (float v) { return v == 0.0f; }));
     CHECK (in (MELODEE_SCREEN_PUSH, 0));
-    auto hit = play (4800, false, 0.0);
+    hit = play (4800, false, 0.0);
     CHECK (std::any_of (hit.begin(), hit.end(), [] (float v) { return std::fabs (v) > 1e-3f; }));
     // Playing: the page asks to be painted as the steps go by, and lights the step playing.
     a.setup ({ { "Pitch 2", 0.3 }, { "Pitch 4", -0.25 }, { "Pitch 6", 0.15 }, { "Velocity 3", 0.4 }, { "Quantize", a.valueOf ("Quantize", "Minor") },
@@ -2049,7 +2064,7 @@ void testRobustness()
     {
         Instance a;
         double v = 0.0;
-        for (const char* bad : { "nan", "inf", "-inf", "1e999", "-5 Hz" })
+        for (const char* bad : { "nan", "inf", "-inf", "1e999", "1e308", "-5 Hz" })
             CHECK (! a.params->text_to_value (a.plugin, a.id ("Cutoff"), bad, &v));
         CHECK (a.params->text_to_value (a.plugin, a.id ("Cutoff"), "1.00 kHz", &v));
     }
@@ -2071,6 +2086,21 @@ void testRobustness()
         a.render (48000, 128, fresh, r, [] (uint64_t at) { return Transport { true, INFINITY, (double) at / 24000.0 }; });
         b.render (48000, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
         CHECK (l == fresh && peakIn (l, 0, l.size()) > 0.01f);
+    }
+    // A sample rate that is no rate at all (0, NaN): activation holds it to 48 kHz rather than dividing by it —
+    // a hit sounds exactly as it does activated at 48 kHz.
+    {
+        const auto trigger = [] (Instance& x, uint64_t at, uint32_t, Events& e) {
+            if (at == 0) x.set (e, "Trigger", 1.0);
+        };
+        Instance ref;
+        ref.render (4800, 128, fresh, r, stopped, [&] (uint64_t at, uint32_t n, Events& e) { trigger (ref, at, n, e); });
+        for (double badRate : { 0.0, (double) NAN })
+        {
+            Instance a (badRate);
+            a.render (4800, 128, l, r, stopped, [&] (uint64_t at, uint32_t n, Events& e) { trigger (a, at, n, e); });
+            CHECK (l == fresh && peakIn (l, 0, l.size()) > 0.01f);
+        }
     }
 }
 

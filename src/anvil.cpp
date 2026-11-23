@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -55,7 +54,11 @@ struct Plugin
     Screen screen { values, stepState };
     std::atomic<uint64_t> outgoing { 0 }, presses { 0 };
     std::atomic<int> audition { -1 };
-    std::atomic<uint64_t> pressedAt { 0 }; // when the page last pressed (steady ms, main thread): a stale press is retired there
+    // Press age is counted in audio frames, never wall time: framesDone is the frames processed since activate
+    // (the audio thread counts them; the page stamps a press with the count), so a host asleep between the press
+    // and its next block ages it not at all.
+    std::atomic<int64_t> framesDone { 0 }, pressFrame { -1 };
+    double sampleRate = 48000.0; // activate's rate, held as Engine::prepare holds it: a press's half second in frames
     bool valuesMoved = false; // the host moved a value in this block (audio thread): the page is painted again
     int shownStep = -1;
     uint32_t shownHits = 0;
@@ -70,18 +73,6 @@ struct Plugin
 constexpr uint64_t screenRestMs = 4000;
 
 Plugin& of (const clap_plugin* p) { return *static_cast<Plugin*> (p->plugin_data); }
-
-// A steady clock in ms, read on the main thread only (the page's press stamps and their retirement): the audio
-// thread reads no clock.
-uint64_t steadyMs()
-{
-    return (uint64_t) std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-// A press on the page acts at the next block. A host may not run a plug-in for a while (Melodee puts a silent
-// instrument to sleep, and nothing but MIDI wakes it): a press older than this is dropped rather than played late.
-// The host's steady time cannot age it (hdslaveOS counts it only while this plug-in is processed), and the page
-// keeps painting while the instrument sleeps, so screenPaint retires a stale press on the main thread.
-constexpr uint64_t pressFreshMs = 500;
 
 TextContext contextOf (const Plugin& p)
 {
@@ -387,7 +378,9 @@ bool presetFromLocation (const clap_plugin* plugin, uint32_t kind, const char*, 
 {
     auto& p = of (plugin);
     const Preset* preset = kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN ? findPreset (key) : nullptr;
-    const auto* hostPresets = static_cast<const clap_host_preset_load*> (p.host->get_extension (p.host, CLAP_EXT_PRESET_LOAD));
+    const auto* hostPresets = p.host != nullptr && p.host->get_extension != nullptr
+                                  ? static_cast<const clap_host_preset_load*> (p.host->get_extension (p.host, CLAP_EXT_PRESET_LOAD))
+                                  : nullptr;
     if (preset == nullptr)
     {
         if (hostPresets != nullptr && hostPresets->on_error != nullptr)
@@ -397,7 +390,9 @@ bool presetFromLocation (const clap_plugin* plugin, uint32_t kind, const char*, 
     float values[paramCount];
     presetValuesOf (*preset, values);
     setAll (p, values);
-    if (const auto* hostParams = static_cast<const clap_host_params*> (p.host->get_extension (p.host, CLAP_EXT_PARAMS)))
+    if (const auto* hostParams = p.host != nullptr && p.host->get_extension != nullptr
+                                      ? static_cast<const clap_host_params*> (p.host->get_extension (p.host, CLAP_EXT_PARAMS))
+                                      : nullptr)
         if (hostParams->rescan != nullptr)
             hostParams->rescan (p.host, CLAP_PARAM_RESCAN_VALUES);
     if (hostPresets != nullptr && hostPresets->loaded != nullptr)
@@ -465,6 +460,12 @@ void pluginDestroy (const clap_plugin* plugin)
 bool pluginActivate (const clap_plugin* plugin, double rate, uint32_t, uint32_t maxFrames)
 {
     auto& p = of (plugin);
+    p.sampleRate = std::isfinite (rate) && rate > 0.0 ? rate : 48000.0; // as Engine::prepare holds it
+    // The frame count restarts here, and with it every press's stamp: no press of the old count fires.
+    p.framesDone.store (0, std::memory_order_relaxed);
+    p.pressFrame.store (-1, std::memory_order_relaxed);
+    p.presses.store (0, std::memory_order_relaxed);
+    p.audition.store (-1, std::memory_order_relaxed);
     p.engine.prepare (rate, maxFrames);
     p.active = true;
     return true;
@@ -498,6 +499,7 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
         return CLAP_PROCESS_ERROR;
     float* left = process->audio_outputs[0].data32[0];
     float* right = process->audio_outputs[0].channel_count > 1 ? process->audio_outputs[0].data32[1] : nullptr;
+    const int64_t blockStart = p.framesDone.load (std::memory_order_relaxed);
 
     // Values the main thread changed (a state loaded while playing): looked through only when it wrote some.
     if (p.mainChanged.exchange (false, std::memory_order_acquire))
@@ -521,17 +523,24 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     const uint32_t lastFrame = frames > 0 ? frames - 1 : 0;
     for (; next < count && in->get (in, next)->time == 0; ++next)
         handle (p, in->get (in, next), process->out_events, lastFrame);
-    // The screen's buttons (Trigger, Advance) and a step it plays, at the block's first frame. One kept waiting
-    // past its freshness was already retired by the page's paints (screenPaint): no clock is read here.
+    // The screen's buttons (Trigger, Advance) and a step it plays, at the block's first frame. Their age counts
+    // frames rendered since the page pressed, judged here by the block that takes them — half a second of audio
+    // at most, and no clock is read. A host asleep in between rendered none, so a press queued while it slept
+    // still plays once at this block however much wall time passed; and since no paint judges it, a page closed
+    // since the press (no paint between press and wake) sounds exactly as one left open does.
     if (p.presses.load (std::memory_order_relaxed) != 0 || p.audition.load (std::memory_order_relaxed) >= 0)
     {
         uint64_t rows = p.presses.exchange (0, std::memory_order_acquire);
         const int s = p.audition.exchange (-1, std::memory_order_acquire);
-        for (uint32_t i = 0; rows != 0; ++i, rows >>= 1)
-            if (rows & 1u)
-                p.engine.press (paramTable[i].id);
-        if (s >= 0)
-            p.engine.playStep (s, 1.0f);
+        const int64_t pressed = p.pressFrame.exchange (-1, std::memory_order_acquire);
+        if (pressed >= 0 && blockStart - pressed <= (int64_t) (p.sampleRate * 0.5))
+        {
+            for (uint32_t i = 0; rows != 0; ++i, rows >>= 1)
+                if (rows & 1u)
+                    p.engine.press (paramTable[i].id);
+            if (s >= 0)
+                p.engine.playStep (s, 1.0f);
+        }
     }
 
     // The host's transport. Without a song position (Melodee always sends one), the sequence counts its own from
@@ -589,6 +598,7 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
             p.hostScreen->request_paint (p.host);
     }
     p.valuesMoved = false;
+    p.framesDone.store (blockStart + (int64_t) frames, std::memory_order_release);
     // Never "sleep": the sequencer must hear the next Play, which is no event. (Melodee puts an idle instrument to
     // sleep itself, and the engine skips its own work while the VCA is closed.)
     return CLAP_PROCESS_CONTINUE;
@@ -614,11 +624,6 @@ bool screenPaint (const clap_plugin* plugin, const melodee_screen_canvas_t* c)
         || c->stride < c->width)
         return false;
     auto& p = of (plugin);
-    // A press kept waiting while the host sleeps the plug-in is retired here, on the main thread (the page paints
-    // on while the instrument sleeps): it must never play late.
-    if ((p.presses.load (std::memory_order_relaxed) != 0 || p.audition.load (std::memory_order_relaxed) >= 0)
-        && steadyMs() - p.pressedAt.load (std::memory_order_acquire) > pressFreshMs)
-        p.presses.exchange (0, std::memory_order_acquire), p.audition.exchange (-1, std::memory_order_acquire);
     const hdui::Host h = hostOf (c);
     p.screen.update (h.nowMs);
     const bool drew = p.screen.paint (h, c->pixels, (int) c->stride, c->whole);
@@ -648,7 +653,7 @@ bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
     {
         const auto& edit = edits.list[i];
         if (edit.press)
-            p.pressedAt.store (steadyMs(), std::memory_order_release), pressed = true;
+            p.pressFrame.store (p.framesDone.load (std::memory_order_relaxed), std::memory_order_release), pressed = true;
         if (edit.press && edit.id >= auditionId && edit.id < auditionId + 8)
         {
             p.audition.store ((int) (edit.id - auditionId), std::memory_order_release);
