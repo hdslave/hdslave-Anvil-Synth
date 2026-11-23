@@ -485,6 +485,11 @@ struct FlushDenormals
     uint64_t saved;
     FlushDenormals() { asm volatile ("mrs %0, fpcr" : "=r"(saved)); asm volatile ("msr fpcr, %0" ::"r"(saved | (1ull << 24))); }
     ~FlushDenormals() { asm volatile ("msr fpcr, %0" ::"r"(saved)); }
+#elif defined(__arm__)
+    // Cortex-A9: FPSCR.FZ, the same flush-to-zero the 64-bit path asks of FPCR.
+    uint32_t saved;
+    FlushDenormals() { asm volatile ("vmrs %0, fpscr" : "=r"(saved)); asm volatile ("vmsr fpscr, %0" ::"r"(saved | (1u << 24))); }
+    ~FlushDenormals() { asm volatile ("vmsr fpscr, %0" ::"r"(saved)); }
 #elif defined(__SSE__)
     unsigned saved;
     FlushDenormals() { saved = __builtin_ia32_stmxcsr(); __builtin_ia32_ldmxcsr (saved | 0x8040); }

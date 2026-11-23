@@ -19,7 +19,7 @@ LDFLAGS := -shared -s -static-libgcc -static-libstdc++ -Wl,--gc-sections -Wl,-z,
 SOURCES := src/anvil.cpp
 HEADERS := $(wildcard src/*.h src/ui/*.h)
 
-.PHONY: all test bench clean fingerprint-update sanitize
+.PHONY: all test bench clean fingerprint-update sanitize sp16
 all: $(OUT)/Anvil.clap
 
 $(OUT)/Anvil.clap: $(SOURCES) $(HEADERS) src/exports.map Makefile
@@ -68,3 +68,15 @@ sanitize:
 
 clean:
 	rm -rf $(OUT)
+
+# Device shared object: ARMv7-A Cortex-A9, softfp, glibc 2.13. Built in sp16-toolchain:gcc11-egl
+# (arm-linux-gnueabi-g++ is not on the Mac). Output build/Anvil-sp16.clap.
+SP16_CXX ?= arm-linux-gnueabi-g++
+SP16_OPT := -O3 -march=armv7-a -mtune=cortex-a9 -mfpu=neon -mfloat-abi=softfp -ffp-contract=fast -fno-math-errno -fno-trapping-math
+SP16_CXXFLAGS := -std=c++17 $(SP16_OPT) $(WARN) -fno-exceptions -fno-rtti -fvisibility=hidden -fPIC -Ithird_party/clap/include -Isrc
+
+sp16: $(OUT)/Anvil-sp16.clap
+
+$(OUT)/Anvil-sp16.clap: $(SOURCES) $(HEADERS) src/exports.map Makefile
+	@mkdir -p $(OUT)
+	$(SP16_CXX) $(SP16_CXXFLAGS) $(SOURCES) $(LDFLAGS) -o $@

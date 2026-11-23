@@ -38,8 +38,9 @@ stayed open or was closed, and none survives a deactivation. The sound is again 
 
 0.6.4 adds a second page for a host that asks for `org.sixteen.screen/1`: a 780×285 body and six parameter ids
 (STEPS, VCO, MIX, VCF, VCA/PATCH, SEQ, with a second bank on VCO and SEQ). The MPC page is unchanged, and so is
-the sound (every fingerprint hash holds). An armv7 build of this page has not been made, and no host has loaded it
-on hardware yet.
+the sound on the MPC build (every fingerprint hash holds). `make sp16` inside the device toolchain writes
+`build/Anvil-sp16.clap` (ARMv7-A softfp, glibc ≤ 2.13, only libm and libc). The host tests passed under qemu-arm
+on that object (521,400 checks). It has not been run on a unit.
 
 ## Controls
 
