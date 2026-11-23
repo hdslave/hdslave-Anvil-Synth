@@ -4,7 +4,7 @@
 
 ![Anvil custom screen running in hdslaveOS](docs/anvil-screen.gif)
 
-> **Desktop CLAP version (macOS & Windows):** A separate desktop CLAP build with all MPC screens on one interactive panel lives in [**`mac-clap/`**](mac-clap/) (`cd mac-clap && ./install-macos.sh`). Releases in this repo stay MPC Sample-only for now while the desktop builds are being finalized.
+> **Desktop CLAP version (macOS & Windows):** A separate desktop CLAP build with all MPC screens on one interactive panel lives in [**`mac-clap/`**](mac-clap/) (`cd mac-clap && ./install-macos.sh`). The SP-16 build is [below](#freesp16).
 
 Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.4). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
@@ -36,11 +36,48 @@ otherwise as it was (every fingerprint hash holds). 0.6.3 counts a press on the 
 it, never by the clock: a press queued while the instrument slept still plays once when it wakes, whether the page
 stayed open or was closed, and none survives a deactivation. The sound is again as it was.
 
-0.6.4 adds a second page for a host that asks for `org.sixteen.screen/1`: a 780×285 body and six parameter ids
-(STEPS, VCO, MIX, VCF, VCA/PATCH, SEQ, with a second bank on VCO and SEQ). The MPC page is unchanged, and so is
-the sound on the MPC build (every fingerprint hash holds). `make sp16` inside the device toolchain writes
-`build/Anvil-sp16.clap` (ARMv7-A softfp, glibc ≤ 2.13, only libm and libc). The host tests passed under qemu-arm
-on that object (521,400 checks). It has not been run on a unit.
+0.6.4 adds the freesp16 page below. The MPC page is unchanged, and so is the sound on the MPC build
+(every fingerprint hash holds). It has not been run on the MPC.
+
+## freesp16
+
+A 32-bit ARM build for [freesp16](https://freesp16.github.io/) on the SP-16. freesp16 keeps its own screen chrome and its six encoders. Anvil draws the 780×285 body between them and names the six parameters for the lit tab (`org.sixteen.screen/1`). STEPS, VCO, MIX, VCF, VCA/PATCH and SEQ are on screen. VCO and SEQ each have a second bank: tap the tab again.
+
+The download is [hdslave Anvil 0.6.4 for freesp16](https://github.com/hdslave/hdslave-Anvil-Synth/releases/tag/v0.6.4-freesp16). Unzip it at the root of the USB stick freesp16 starts from. `Anvil.clap` then sits in `freesp16-data/freesp16/Plugins/`. On a track: TRACK TYPE, PLUGIN, SELECT PLUGIN, **hdslave Anvil**, OPEN UI.
+
+The object is ARMv7-A, softfp, glibc 2.13, and it needs only `libm` and `libc`. The host tests passed on it under qemu-arm (521,408 checks), and the MPC build's fingerprint did not move. On 2026-11-23 it was loaded on a unit and it worked.
+
+**STEPS**
+
+![Anvil STEPS page, eight steps with pitch and velocity](docs/sp16/steps.png)
+
+**VCO, the two oscillators**
+
+![Anvil VCO page, both oscillators](docs/sp16/vco.png)
+
+**VCO, FM and sync**
+
+![Anvil VCO page, envelope, FM and hard sync](docs/sp16/vco-fm.png)
+
+**MIX**
+
+![Anvil mixer page](docs/sp16/mix.png)
+
+**VCF**
+
+![Anvil filter page](docs/sp16/vcf.png)
+
+**VCA and patch**
+
+![Anvil VCA and patch page](docs/sp16/vca.png)
+
+**Sequencer**
+
+![Anvil sequencer page, clock and groove](docs/sp16/seq.png)
+
+**Sequencer, notes**
+
+![Anvil sequencer page, quantize, notes and run](docs/sp16/seq-notes.png)
 
 ## Controls
 

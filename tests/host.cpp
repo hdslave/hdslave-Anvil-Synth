@@ -2154,6 +2154,7 @@ void testSixteenScreen (const std::string& folder)
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 450, 40)); // re-tap flips the bank
     bank ();
     CHECK (std::strcmp (tab, "ANVIL - VCO 2/2") == 0 && ids[0] == a.id ("VCO Decay") && ids[4] == a.id ("Hard Sync") && ids[5] == CLAP_INVALID_ID);
+    shot ("vco-fm");
 
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 522, 40)); // MIX
     bank ();
@@ -2164,16 +2165,19 @@ void testSixteenScreen (const std::string& folder)
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 594, 40)); // VCF
     bank ();
     CHECK (std::strcmp (tab, "ANVIL - VCF") == 0 && ids[0] == a.id ("Cutoff") && ids[5] == a.id ("Noise/VCF Mod"));
+    shot ("vcf");
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 666, 40)); // VCA / PATCH
     bank ();
     CHECK (std::strcmp (tab, "ANVIL - VCA/PATCH") == 0 && ids[0] == a.id ("VCA EG") && ids[2] == a.id ("Volume") && ids[5] == a.id ("VCF EG > VCO 2"));
+    shot ("vca");
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 738, 40)); // SEQ
     bank ();
     CHECK (std::strcmp (tab, "ANVIL - SEQ 1/2") == 0 && ids[0] == a.id ("Clock Div") && ids[5] == a.id ("Ratchet"));
+    shot ("seq");
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 738, 40));
     bank ();
     CHECK (std::strcmp (tab, "ANVIL - SEQ 2/2") == 0 && ids[0] == a.id ("Quantize") && ids[2] == a.id ("Run") && ids[3] == CLAP_INVALID_ID);
-    shot ("seq");
+    shot ("seq-notes");
 
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 378, 40)); // back to STEPS
     const int before = processRequests;
