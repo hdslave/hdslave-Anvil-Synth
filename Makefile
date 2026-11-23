@@ -50,7 +50,8 @@ bench: $(OUT)/bench
 
 # The tests under AddressSanitizer and UBSan (build/asan): a read past a buffer, a leak or undefined behaviour stops
 # them (abort_on_error, so a report is never taken for a plain exit 1). The fingerprint's hashes hold only for the
-# release flags, so their mismatch (exit 1) is expected here; every scenario must still run clean.
+# release flags, so their mismatch (exit 1) is expected here; every scenario must still run clean — exit 1 is also
+# what a load failure returns, so the scenario lines in its log are counted against tests/fingerprint.txt.
 SAN := -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g1
 SAN_ENV := ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1:abort_on_error=1
 sanitize:
@@ -60,7 +61,10 @@ sanitize:
 	$(CXX) -std=c++17 -O1 $(WARN) $(SAN) -Ithird_party/clap/include tests/fingerprint.cpp -ldl -o $(OUT)/asan/fingerprint
 	$(SAN_ENV) $(OUT)/asan/host $(OUT)/asan/Anvil.clap $(OUT)/asan
 	@$(SAN_ENV) $(OUT)/asan/fingerprint $(OUT)/asan/Anvil.clap tests/fingerprint.txt > $(OUT)/asan/fingerprint.log 2>&1; \
-	    rc=$$?; if [ $$rc -gt 1 ]; then cat $(OUT)/asan/fingerprint.log; exit $$rc; fi; echo "sanitize: every fingerprint scenario ran clean"
+	    rc=$$?; if [ $$rc -gt 1 ]; then cat $(OUT)/asan/fingerprint.log; exit $$rc; fi; \
+	    ran=$$(grep -Ec '^[a-z0-9-]+ [0-9a-f]{16}$$' $(OUT)/asan/fingerprint.log); want=$$(grep -c '' tests/fingerprint.txt); \
+	    if [ "$$ran" -ne "$$want" ]; then echo "sanitize: $$ran of $$want fingerprint scenarios ran (a load failure also exits 1)"; cat $(OUT)/asan/fingerprint.log; exit 1; fi; \
+	    echo "sanitize: every fingerprint scenario ran clean"
 
 clean:
 	rm -rf $(OUT)
