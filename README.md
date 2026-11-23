@@ -6,7 +6,7 @@
 
 > **Desktop CLAP version (macOS & Windows):** A separate desktop CLAP build with all MPC screens on one interactive panel lives in [**`mac-clap/`**](mac-clap/) (`cd mac-clap && ./install-macos.sh`). Releases in this repo stay MPC Sample-only for now while the desktop builds are being finalized.
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.3). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.4). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 Its 8-step pitch and velocity sequencer (with variable Length and host swing) locks tightly to the host transport: steps fall on the beat grid while playing, stop on stop, and follow song jumps. Under **hdslaveOS**, Anvil draws its own live step-bar and velocity screen directly on the MPC Sample (see [The screen](#the-screen)).
 
@@ -35,6 +35,11 @@ gliding, `reset` leaving a fresh engine, non-finite text and states from a newer
 otherwise as it was (every fingerprint hash holds). 0.6.3 counts a press on the page by the frames rendered since
 it, never by the clock: a press queued while the instrument slept still plays once when it wakes, whether the page
 stayed open or was closed, and none survives a deactivation. The sound is again as it was.
+
+0.6.4 adds a second page for a host that asks for `org.sixteen.screen/1`: a 780×285 body and six parameter ids
+(STEPS, VCO, MIX, VCF, VCA/PATCH, SEQ, with a second bank on VCO and SEQ). The MPC page is unchanged, and so is
+the sound (every fingerprint hash holds). An armv7 build of this page has not been made, and no host has loaded it
+on hardware yet.
 
 ## Controls
 
@@ -144,6 +149,12 @@ In hdslaveOS (hdslave's Melodee fork), Anvil draws its own page in place of the 
   step (framed), Push plays it as its pad does while Run is on (with Run off too), K1 and K2 turn its Pitch and
   Velocity, K3 the Cutoff.
 - **VCO, MIX, VCF, VCA, PATCH, SEQ**: the panel's knobs by section, the steps beside them.
+
+A host that asks for `org.sixteen.screen/1` gets a different page, 780×285, and names six parameters for its own
+encoders. STEPS puts the picked step's Pitch and Velocity on K1 and K2, then Cutoff, Resonance, VCF Decay and VCA
+Decay. VCO and SEQ each have two banks (tap the tab again, or the other bank). Trigger and Advance are buttons on
+the STEPS page, not knobs. The wheel moves the picked step; Push plays it. The MPC page above is what hdslaveOS
+asks for. Any other host asks for neither.
 
 On a list the controls are hdslave Machine's: the wheel moves a row; Push edits it (the wheel then changes it: a
 choice a step, a knob 1/128, 1/1024 with Shift; Push again leaves), or presses a button (Trigger, Advance); Minus /

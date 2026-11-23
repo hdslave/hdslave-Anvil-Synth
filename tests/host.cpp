@@ -6,6 +6,7 @@
 #include "wav.h"
 #include "png.h"
 #include "../src/melodee_screen.h"
+#include "../src/sixteen_screen.h"
 
 #include <clap/clap.h>
 
@@ -2104,6 +2105,85 @@ void testRobustness()
     }
 }
 
+// The six-encoder page (org.sixteen.screen/1): knob banks, tab presses, a step drag, and a picture.
+void testSixteenScreen (const std::string& folder)
+{
+    Instance a;
+    const auto* ext = static_cast<const sixteen_plugin_screen_t*> (a.plugin->get_extension (a.plugin, SIXTEEN_EXT_SCREEN));
+    CHECK (ext != nullptr && ext->render != nullptr && ext->knobs != nullptr && ext->touch != nullptr
+           && ext->selector_turn != nullptr && ext->selector_push != nullptr);
+    if (ext == nullptr)
+        return;
+    uint32_t ids[6] = {};
+    char tab[SIXTEEN_TAB_NAME_SIZE] = {};
+    auto bank = [&] { CHECK (ext->knobs (a.plugin, ids, tab)); };
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - STEP 01") == 0);
+    CHECK (ids[0] == a.id ("Pitch 1") && ids[1] == a.id ("Velocity 1") && ids[2] == a.id ("Cutoff"));
+    CHECK (ids[3] == a.id ("Resonance") && ids[4] == a.id ("VCF Decay") && ids[5] == a.id ("VCA Decay"));
+    CHECK (ext->selector_turn (a.plugin, 1));
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - STEP 02") == 0 && ids[0] == a.id ("Pitch 2") && ids[1] == a.id ("Velocity 2"));
+    CHECK (ext->selector_turn (a.plugin, -1));
+
+    std::vector<uint32_t> pixels ((size_t) SIXTEEN_SCREEN_WIDTH * SIXTEEN_SCREEN_HEIGHT);
+    sixteen_screen_surface_t surf {};
+    surf.pixels = pixels.data ();
+    surf.width = SIXTEEN_SCREEN_WIDTH;
+    surf.height = SIXTEEN_SCREEN_HEIGHT;
+    surf.stride = SIXTEEN_SCREEN_WIDTH;
+    surf.now_ms = 1000;
+    auto shot = [&] (const char* name) {
+        surf.now_ms += 40;
+        CHECK (ext->render (a.plugin, &surf, true));
+        CHECK (writePng ((folder + "/screen-sp16-" + name + ".png").c_str (), pixels.data (), SIXTEEN_SCREEN_WIDTH,
+                         SIXTEEN_SCREEN_HEIGHT, SIXTEEN_SCREEN_WIDTH, 1));
+    };
+    shot ("steps");
+    int varied = 0;
+    for (int y = 0; y < 60; ++y)
+        for (int x = 0; x < 320; ++x)
+            varied += pixels[(size_t) y * SIXTEEN_SCREEN_WIDTH + (size_t) x] != pixels[0];
+    CHECK (varied > 200);
+
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 450, 40)); // VCO
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - VCO 1/2") == 0);
+    CHECK (ids[0] == a.id ("VCO 1 Freq") && ids[2] == a.id ("VCO 1 Wave") && ids[3] == a.id ("VCO 2 Freq") && ids[5] == a.id ("VCO 2 Wave"));
+    shot ("vco");
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 450, 40)); // re-tap flips the bank
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - VCO 2/2") == 0 && ids[0] == a.id ("VCO Decay") && ids[4] == a.id ("Hard Sync") && ids[5] == CLAP_INVALID_ID);
+
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 522, 40)); // MIX
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - MIX") == 0 && ids[0] == a.id ("VCO 1 Level") && ids[3] == a.id ("Noise Color"));
+    CHECK (ids[4] == CLAP_INVALID_ID && ids[5] == CLAP_INVALID_ID);
+    shot ("mix");
+
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 594, 40)); // VCF
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - VCF") == 0 && ids[0] == a.id ("Cutoff") && ids[5] == a.id ("Noise/VCF Mod"));
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 666, 40)); // VCA / PATCH
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - VCA/PATCH") == 0 && ids[0] == a.id ("VCA EG") && ids[2] == a.id ("Volume") && ids[5] == a.id ("VCF EG > VCO 2"));
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 738, 40)); // SEQ
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - SEQ 1/2") == 0 && ids[0] == a.id ("Clock Div") && ids[5] == a.id ("Ratchet"));
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 738, 40));
+    bank ();
+    CHECK (std::strcmp (tab, "ANVIL - SEQ 2/2") == 0 && ids[0] == a.id ("Quantize") && ids[2] == a.id ("Run") && ids[3] == CLAP_INVALID_ID);
+    shot ("seq");
+
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 378, 40)); // back to STEPS
+    const int before = processRequests;
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 111, 120)); // step 1 pitch, above the centre line
+    double pitched = 0;
+    CHECK (a.params->get_value (a.plugin, a.id ("Pitch 1"), &pitched) && pitched > 0.4);
+    CHECK (ext->selector_push (a.plugin));
+    CHECK (processRequests > before);
+}
+
 int main (int argc, char** argv)
 {
     if (argc < 3)
@@ -2143,6 +2223,7 @@ int main (int argc, char** argv)
     testPitchAndFm();
     testQuantize();
     testScreen (argv[2]);
+    testSixteenScreen (argv[2]);
     testPads();
     testChokes();
     testRobustness();

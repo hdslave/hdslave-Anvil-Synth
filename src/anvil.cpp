@@ -5,6 +5,7 @@
 #include "params.h"
 #include "presets.h"
 #include "screen.h"
+#include "screen_sp16.h"
 #include "melodee_screen.h"
 
 #include <clap/clap.h>
@@ -52,6 +53,7 @@ struct Plugin
     const clap_host_melodee_screen* hostScreen = nullptr;
     StepState stepState;
     Screen screen { values, stepState };
+    ScreenSp16 screen16 { values, stepState };
     std::atomic<uint64_t> outgoing { 0 }, presses { 0 };
     std::atomic<int> audition { -1 };
     // Press age is counted in audio frames, never wall time: framesDone is the frames processed since activate
@@ -580,8 +582,8 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     }
     for (; next < count; ++next) // events stamped past the block (a host's mistake): applied at its end
         handle (p, in->get (in, next), process->out_events, lastFrame);
-    // Publish sequence and hit changes. The screen schedules its own animation frames.
-    if (p.hostScreen != nullptr)
+    // Publish sequence and hit changes. Both pages read these atomics. Melodee's page asks for another paint;
+    // a host without that extension (the six-encoder page polls) still needs the values.
     {
         const int step = p.engine.currentStep();
         const uint32_t hits = p.engine.hitCount();
@@ -592,9 +594,10 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
             p.stepState.step.store (step, std::memory_order_relaxed);
             p.stepState.running.store (running, std::memory_order_relaxed);
             p.stepState.hits.store (hits, std::memory_order_release);
-            p.hostScreen->request_paint (p.host);
+            if (p.hostScreen != nullptr)
+                p.hostScreen->request_paint (p.host);
         }
-        else if (p.valuesMoved)
+        else if (p.valuesMoved && p.hostScreen != nullptr)
             p.hostScreen->request_paint (p.host);
     }
     p.valuesMoved = false;
@@ -640,14 +643,11 @@ bool screenPaint (const clap_plugin* plugin, const melodee_screen_canvas_t* c)
     return drew;
 }
 
-bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
+// Values and button presses from either page. The host is told now, on this main-thread call, because a host may
+// not run the plug-in soon enough to hear them from process() (Melodee does not run a sleeping instrument, and its
+// request_flush waits for the next block). The output events still follow for hosts that record them.
+void publishEdits (Plugin& p, const hdui::Edits& edits)
 {
-    if (e == nullptr || e->kind > MELODEE_SCREEN_NUDGE)
-        return false;
-    auto& p = of (plugin);
-    p.screenTouched = true; // the page animates again from its next paint
-    hdui::Edits edits;
-    const bool used = p.screen.input ((hdui::Key) e->kind, e->value, e->shift, edits);
     bool changed = false, pressed = false;
     for (int i = 0; i < edits.count; ++i)
     {
@@ -673,9 +673,6 @@ bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
             changed = true;
         }
     }
-    // The host's own copy of the values: read again now (this is a main-thread call), since a host may not run the
-    // plug-in soon enough to hear them from process() (Melodee does not run a sleeping instrument, and its
-    // request_flush waits for the next block). The output events still follow for hosts that record them.
     if (changed && p.hostParams != nullptr)
     {
         if (p.hostParams->rescan != nullptr)
@@ -686,6 +683,17 @@ bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
     // A press, or a value the engine should take: ask to be run (a host that put the plug-in to sleep wakes it).
     if ((changed || pressed) && p.host != nullptr && p.host->request_process != nullptr)
         p.host->request_process (p.host);
+}
+
+bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
+{
+    if (e == nullptr || e->kind > MELODEE_SCREEN_NUDGE)
+        return false;
+    auto& p = of (plugin);
+    p.screenTouched = true; // the page animates again from its next paint
+    hdui::Edits edits;
+    const bool used = p.screen.input ((hdui::Key) e->kind, e->value, e->shift, edits);
+    publishEdits (p, edits);
     if (used && p.hostScreen != nullptr)
         p.hostScreen->request_paint (p.host);
     return used;
@@ -701,9 +709,58 @@ void screenKnobs (const clap_plugin* plugin, clap_id ids[3])
 
 const clap_plugin_melodee_screen screenExtension { screenPaint, screenInput, screenKnobs };
 
+bool sixteenRender (const void* plugin, const sixteen_screen_surface_t* surface, bool force)
+{
+    if (plugin == nullptr || surface == nullptr || surface->pixels == nullptr || surface->width != SIXTEEN_SCREEN_WIDTH
+        || surface->height != SIXTEEN_SCREEN_HEIGHT || surface->stride < surface->width)
+        return false;
+    return of (static_cast<const clap_plugin*> (plugin)).screen16.paint (surface->pixels, (int) surface->stride, surface->now_ms, force);
+}
+
+bool sixteenTouch (const void* plugin, int32_t phase, int32_t x, int32_t y)
+{
+    if (plugin == nullptr)
+        return false;
+    auto& p = of (static_cast<const clap_plugin*> (plugin));
+    hdui::Edits edits;
+    const bool used = p.screen16.touch ((int) phase, (int) x, (int) y, edits);
+    if (edits.count != 0)
+        publishEdits (p, edits);
+    return used;
+}
+
+bool sixteenTurn (const void* plugin, int32_t delta)
+{
+    if (plugin == nullptr)
+        return false;
+    return of (static_cast<const clap_plugin*> (plugin)).screen16.turn ((int) delta);
+}
+
+bool sixteenPush (const void* plugin)
+{
+    if (plugin == nullptr)
+        return false;
+    auto& p = of (static_cast<const clap_plugin*> (plugin));
+    hdui::Edits edits;
+    const bool used = p.screen16.push (edits);
+    if (edits.count != 0)
+        publishEdits (p, edits);
+    return used;
+}
+
+bool sixteenKnobs (const void* plugin, uint32_t ids[6], char tab[SIXTEEN_TAB_NAME_SIZE])
+{
+    if (plugin == nullptr || ids == nullptr || tab == nullptr)
+        return false;
+    return of (static_cast<const clap_plugin*> (plugin)).screen16.knobs (ids, tab);
+}
+
+const sixteen_plugin_screen sixteenExtension { nullptr, nullptr, sixteenRender, sixteenTouch, sixteenTurn, sixteenPush, sixteenKnobs };
+
 const void* pluginExtension (const clap_plugin*, const char* id)
 {
     if (std::strcmp (id, CLAP_EXT_MELODEE_SCREEN) == 0) return &screenExtension;
+    if (std::strcmp (id, SIXTEEN_EXT_SCREEN) == 0) return &sixteenExtension;
     if (std::strcmp (id, CLAP_EXT_PARAMS) == 0) return &paramsExtension;
     if (std::strcmp (id, CLAP_EXT_STATE) == 0) return &stateExtension;
     if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0) return &audioExtension;
