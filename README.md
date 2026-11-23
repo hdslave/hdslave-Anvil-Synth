@@ -4,7 +4,7 @@
 
 ![Anvil custom screen running in hdslaveOS](docs/anvil-screen.gif)
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.1). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.2). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 Its 8-step pitch and velocity sequencer (with variable Length and host swing) locks tightly to the host transport: steps fall on the beat grid while playing, stop on stop, and follow song jumps. Under **hdslaveOS**, Anvil draws its own live step-bar and velocity screen directly on the MPC Sample (see [The screen](#the-screen)).
 
@@ -26,6 +26,10 @@ On the MPC it draws its own page on the screen (see [The screen](#the-screen)). 
 steps; with Run off they play notes (see [The pads](#the-pads-midi-notes)).
 
 Not yet run on the MPC itself: tested in hdslaveOS's own CLAP host code (`clap_check`) and this repository's tests.
+
+0.6.2 hardens what a host can send — tempo and sample rate held to sense, a Play landing mid-step the same at every
+block size, a state or preset settling at once instead of gliding, `reset` leaving a fresh engine, non-finite text
+and states from a newer version refused — with the sound otherwise as it was (every fingerprint hash holds).
 
 ## Controls
 
@@ -203,6 +207,7 @@ Needs Docker with a Linux arm64 context (Melodee's `colima-melodee` and its `mel
 
 ```sh
 ./build.sh          # build/Anvil.clap, then the tests (tests/host.cpp), the sound's fingerprint and demo renders build/demo-*.wav
+./build.sh sanitize # the tests and the fingerprint's scenarios under AddressSanitizer and UBSan
 ./build.sh bench    # build/bench
 tools/bench.sh      # instruction counts (Melodee's melodee-profiler image)
 ```

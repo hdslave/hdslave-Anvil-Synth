@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <new>
@@ -38,9 +39,10 @@ struct Plugin
     // a state is loaded. The engine notices those at the next block.
     std::atomic<float> values[paramCount];
     std::atomic<bool> mainChanged { false }; // the main thread wrote values (a state, a preset, a flush): look at them
+    std::atomic<bool> settlePending { false }; // a state or preset was loaded: the next block settles every glide
     float applied[paramCount] {};
     Engine engine;
-    bool active = false;
+    std::atomic<bool> active { false }; // written on the main thread, read wherever a flush lands
     // The steps' Pitch texts read by Quantize: when it moves, the host is asked (from the main thread) to read the
     // texts again.
     std::atomic<bool> textStale { false };
@@ -53,7 +55,7 @@ struct Plugin
     Screen screen { values, stepState };
     std::atomic<uint64_t> outgoing { 0 }, presses { 0 };
     std::atomic<int> audition { -1 };
-    std::atomic<uint64_t> pressedAt { 0 }; // when the page last pressed (steady ms): a press kept waiting is dropped
+    std::atomic<uint64_t> pressedAt { 0 }; // when the page last pressed (steady ms, main thread): a stale press is retired there
     bool valuesMoved = false; // the host moved a value in this block (audio thread): the page is painted again
     int shownStep = -1;
     uint32_t shownHits = 0;
@@ -69,13 +71,16 @@ constexpr uint64_t screenRestMs = 4000;
 
 Plugin& of (const clap_plugin* p) { return *static_cast<Plugin*> (p->plugin_data); }
 
-// A steady clock in ms, for the age of the page's presses.
+// A steady clock in ms, read on the main thread only (the page's press stamps and their retirement): the audio
+// thread reads no clock.
 uint64_t steadyMs()
 {
     return (uint64_t) std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 // A press on the page acts at the next block. A host may not run a plug-in for a while (Melodee puts a silent
 // instrument to sleep, and nothing but MIDI wakes it): a press older than this is dropped rather than played late.
+// The host's steady time cannot age it (hdslaveOS counts it only while this plug-in is processed), and the page
+// keeps painting while the instrument sleeps, so screenPaint retires a stale press on the main thread.
 constexpr uint64_t pressFreshMs = 500;
 
 TextContext contextOf (const Plugin& p)
@@ -319,9 +324,14 @@ void setAll (Plugin& p, const float* values)
     for (uint32_t i = 0; i < paramCount; ++i)
         p.values[i].store (values[i], std::memory_order_relaxed);
     p.mainChanged.store (true, std::memory_order_release);
-    if (! p.active) // not processing: the engine takes them now; otherwise at the next block
+    if (! p.active) // not processing: the engine takes them now, settled; otherwise at the next block
+    {
         for (uint32_t i = 0; i < paramCount; ++i)
             p.applied[i] = values[i], p.engine.set (paramTable[i].id, values[i]);
+        p.engine.settle();
+    }
+    else
+        p.settlePending.store (true, std::memory_order_release);
     // The texts may read differently now (Quantize), and the screen shows the new values.
     p.textStale.store (true, std::memory_order_release);
     if (p.host != nullptr && p.host->request_callback != nullptr)
@@ -351,8 +361,8 @@ bool stateLoad (const clap_plugin* plugin, const clap_istream* stream)
     char tag[4] = {};
     uint32_t header[2] = {};
     if (! readAll (stream, tag, 4) || std::memcmp (tag, stateTag, 4) != 0 || ! readAll (stream, header, sizeof (header))
-        || header[0] == 0 || header[1] > 4096)
-        return false;
+        || header[0] == 0 || header[0] > stateVersion || header[1] > 4096)
+        return false; // a state from a newer version is not guessed at
     float loaded[paramCount];
     for (uint32_t i = 0; i < paramCount; ++i)
         loaded[i] = paramTable[i].def;
@@ -497,6 +507,8 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
             if (v != p.applied[i] && paramTable[i].kind != Kind::button)
                 p.applied[i] = v, p.engine.set (paramTable[i].id, v);
         }
+    if (p.settlePending.exchange (false, std::memory_order_acquire))
+        p.engine.settle(); // a state or preset loaded over whatever sounds: no glide across the load
     // The values the screen's page set are told to the host first, at the frame the engine takes them (and before any
     // event this block sends back, so they stay in time order).
     tellHost (p, process->out_events, 0);
@@ -509,19 +521,17 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     const uint32_t lastFrame = frames > 0 ? frames - 1 : 0;
     for (; next < count && in->get (in, next)->time == 0; ++next)
         handle (p, in->get (in, next), process->out_events, lastFrame);
-    // The screen's buttons (Trigger, Advance) and a step it plays, at the block's first frame (if they are fresh).
+    // The screen's buttons (Trigger, Advance) and a step it plays, at the block's first frame. One kept waiting
+    // past its freshness was already retired by the page's paints (screenPaint): no clock is read here.
     if (p.presses.load (std::memory_order_relaxed) != 0 || p.audition.load (std::memory_order_relaxed) >= 0)
     {
         uint64_t rows = p.presses.exchange (0, std::memory_order_acquire);
         const int s = p.audition.exchange (-1, std::memory_order_acquire);
-        if (steadyMs() - p.pressedAt.load (std::memory_order_acquire) <= pressFreshMs)
-        {
-            for (uint32_t i = 0; rows != 0; ++i, rows >>= 1)
-                if (rows & 1u)
-                    p.engine.press (paramTable[i].id);
-            if (s >= 0)
-                p.engine.playStep (s, 1.0f);
-        }
+        for (uint32_t i = 0; rows != 0; ++i, rows >>= 1)
+            if (rows & 1u)
+                p.engine.press (paramTable[i].id);
+        if (s >= 0)
+            p.engine.playStep (s, 1.0f);
     }
 
     // The host's transport. Without a song position (Melodee always sends one), the sequence counts its own from
@@ -530,7 +540,11 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
     {
         const bool playing = (t->flags & CLAP_TRANSPORT_IS_PLAYING) != 0;
         const bool placed = (t->flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE) != 0;
-        const double bpm = (t->flags & CLAP_TRANSPORT_HAS_TEMPO) && t->tempo > 0.0 ? t->tempo : 120.0;
+        // The tempo is held to sense (1..1000 BPM): a missing, non-finite or impossible one reads as 120 rather
+        // than clocking the sequencer without a frame ever passing.
+        double bpm = 120.0;
+        if ((t->flags & CLAP_TRANSPORT_HAS_TEMPO) && std::isfinite (t->tempo) && t->tempo > 0.0)
+            bpm = std::min (std::max (t->tempo, 1.0), 1000.0);
         const double beats = placed ? (double) t->song_pos_beats / (double) CLAP_BEATTIME_FACTOR : p.engine.ownPosition();
         p.engine.transport (playing, beats, bpm, frames);
     }
@@ -600,6 +614,11 @@ bool screenPaint (const clap_plugin* plugin, const melodee_screen_canvas_t* c)
         || c->stride < c->width)
         return false;
     auto& p = of (plugin);
+    // A press kept waiting while the host sleeps the plug-in is retired here, on the main thread (the page paints
+    // on while the instrument sleeps): it must never play late.
+    if ((p.presses.load (std::memory_order_relaxed) != 0 || p.audition.load (std::memory_order_relaxed) >= 0)
+        && steadyMs() - p.pressedAt.load (std::memory_order_acquire) > pressFreshMs)
+        p.presses.exchange (0, std::memory_order_acquire), p.audition.exchange (-1, std::memory_order_acquire);
     const hdui::Host h = hostOf (c);
     p.screen.update (h.nowMs);
     const bool drew = p.screen.paint (h, c->pixels, (int) c->stride, c->whole);

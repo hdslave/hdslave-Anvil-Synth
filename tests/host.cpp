@@ -337,6 +337,11 @@ void testState()
     for (auto& [name, id] : a.ids)
         CHECK (a.value (name) == b.value (name));
     b.setup ({}); // the same one-frame start as a's
+    // A state load settles at once, with no glide, while values set by hand glide; both rest a stopped block
+    // first (a silent engine takes its knobs as they are there), and from then the sounds are the same to the bit.
+    const auto rest = [] (uint64_t) { return Transport { false, 120.0, 0.0 }; };
+    a.render (128, 128, l1, r1, rest);
+    b.render (128, 128, l2, r2, rest);
     auto t = [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); };
     a.render (48000, 128, l1, r1, t);
     b.render (48000, 128, l2, r2, t);
@@ -700,6 +705,29 @@ void testBlockSizes()
         a.setup (patch (a));
         a.render (48000, block, l, r, t, events (&a));
         CHECK (l == l128 && r == r128);
+    }
+    // Play landing mid-step (1/8 at 120 BPM: a step every 12000 frames): whether the step just past plays at once is
+    // one host block's question (128 frames), whatever block size this host calls with — 60 frames in plays it at
+    // every block size, 1000 frames in leaves it at every block size, to the bit.
+    for (double past : { 60.0, 1000.0 })
+    {
+        const auto mid = [past] (uint64_t at) { return playingFrom (past / 24000.0, 120.0, 48000.0, at); };
+        std::vector<float> first;
+        for (uint32_t block : { 128u, 37u, 1u, 4096u })
+        {
+            Instance a;
+            a.setup (clickPatch (a));
+            a.render (48000, block, l, r, mid);
+            if (block == 128)
+                first = l;
+            else
+                CHECK (l == first);
+        }
+        const auto hits = onsets (first);
+        if (past == 60.0)
+            CHECK (! hits.empty() && hits[0] < 48); // the step just past plays at once
+        else
+            CHECK (! hits.empty() && hits[0] >= 11000 - 48 && hits[0] < 11000 + 48); // the next step is the first
     }
 }
 
@@ -1322,6 +1350,10 @@ void demos (const std::string& folder)
         for (auto& [name, id] : a.ids)
             CHECK (a.value (name) == b.value (name));
         std::vector<float> l, r, l2, r2;
+        // As in testState: a preset load settles at once and hand-set values glide, so both rest a stopped block.
+        const auto rest = [] (uint64_t) { return Transport { false, 120.0, 0.0 }; };
+        a.render (128, 128, l, r, rest);
+        b.render (128, 128, l2, r2, rest);
         auto t = [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); };
         a.render (48000 * 8, 128, l, r, t);
         b.render (48000 * 8, 128, l2, r2, t);
@@ -1446,6 +1478,7 @@ void testScreen (const std::string& folder)
     CHECK (in (MELODEE_SCREEN_PUSH, 0));
     CHECK (processRequests > processBefore);
     std::this_thread::sleep_for (std::chrono::milliseconds (600));
+    paint(); // the page paints on while the plug-in waits (as Melodee paints a sleeping instrument's page): there the stale press is retired
     quiet = play (4800, false, 0.0);
     CHECK (std::all_of (quiet.begin(), quiet.end(), [] (float v) { return v == 0.0f; }));
     CHECK (in (MELODEE_SCREEN_PUSH, 0));
@@ -1920,6 +1953,21 @@ void testChokes()
         CHECK (peakIn (again, done, again.size()) > 0.01f);
         CHECK (peakIn (run (b, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) } }), done, 48000) < 1e-4f);
     }
+    // A hit the sequencer itself played (the host playing, no key ever pressed): All Sound Off and a choke of key -1
+    // stop it and the next step plays as ever; a named key's choke leaves it ringing. (The pad patch's 10 s decay
+    // rings through the step at frame 12000, so the windows sit inside one step.)
+    {
+        Instance a, b, c;
+        a.setup (padPatch (a));
+        b.setup (padPatch (b));
+        c.setup (padPatch (c));
+        const auto stormed = run (a, 24000, true, { { 6000, storm (38) } });
+        CHECK (peakIn (stormed, 6480, 11900) < 1e-4f && peakIn (stormed, 12100, 23900) > 0.01f);
+        const auto all = run (b, 24000, true, { { 6000, chokeKey (-1) } });
+        CHECK (peakIn (all, 6480, 11900) < 1e-4f);
+        const auto left = run (c, 24000, true, { { 6000, chokeKey (38) } });
+        CHECK (peakIn (left, 6480, 11900) > 0.01f);
+    }
     // The same output in blocks of 128, 37, 1 and 4096 frames with chokes, All Sound Off and a hit in a fade.
     {
         const Timeline busy { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) }, { cut + 16, noteOn (40, 1.0) }, { 20000, midi (0xb3, 120, 0) },
@@ -1937,6 +1985,92 @@ void testChokes()
                 CHECK (l == first);
         }
         CHECK (loudest (first) > 0.05f);
+    }
+}
+
+// 0.6.2: what a hostile or careless host can send — a reset must leave a fresh engine, a state loaded over a ringing
+// hit settles in one block, text and states that are not finite or not this version are refused, and no tempo (nor
+// the absence of one) can hang the clock.
+void testRobustness()
+{
+    std::vector<float> l, r, fresh;
+    const auto stopped = [] (uint64_t) { return Transport { false, 120.0, 0.0 }; };
+    // reset() after a loud hit on the very first frame: the next, softer hit on frame 0 is no "second hit of that
+    // frame", and sounds exactly as a fresh instance's does.
+    {
+        Instance a, b;
+        a.render (128, 128, l, r, stopped, [&] (uint64_t at, uint32_t, Events& e) {
+            if (at == 0) a.set (e, "Trigger", 1.0);
+        });
+        a.plugin->reset (a.plugin);
+        const auto softer = [&] (Instance& x, uint64_t at, uint32_t, Events& e) {
+            if (at == 0) x.set (e, "Velocity 1", 0.4), x.set (e, "Trigger", 1.0);
+        };
+        a.render (4800, 128, fresh, r, stopped, [&] (uint64_t at, uint32_t n, Events& e) { softer (a, at, n, e); });
+        b.render (4800, 128, l, r, stopped, [&] (uint64_t at, uint32_t n, Events& e) { softer (b, at, n, e); });
+        CHECK (l == fresh && peakIn (l, 0, l.size()) > 0.01f);
+    }
+    // A state loaded while a hit rings settles at the next block (no glide across it): Volume 0 there is silence
+    // there, once the decimator's own dozen frames are out.
+    {
+        Instance a, quiet;
+        quiet.setup ({ { "Volume", 0.0 } });
+        std::vector<uint8_t> saved;
+        clap_ostream os { &saved, [] (const clap_ostream* s, const void* d, uint64_t n) -> int64_t {
+            auto* v = static_cast<std::vector<uint8_t>*> (s->ctx);
+            v->insert (v->end(), (const uint8_t*) d, (const uint8_t*) d + n);
+            return (int64_t) n;
+        } };
+        CHECK (quiet.state->save (quiet.plugin, &os));
+        a.render (4800, 128, l, r, stopped, [&] (uint64_t at, uint32_t, Events& e) {
+            if (at == 0) a.set (e, "Trigger", 1.0);
+        });
+        CHECK (peakIn (l, 0, l.size()) > 0.01f); // it rings
+        struct Reader { const std::vector<uint8_t>* v; size_t at; } reader { &saved, 0 };
+        clap_istream is { &reader, [] (const clap_istream* s, void* to, uint64_t n) -> int64_t {
+            auto* rd = static_cast<Reader*> (s->ctx);
+            const size_t k = std::min<size_t> ((size_t) n, rd->v->size() - rd->at);
+            std::memcpy (to, rd->v->data() + rd->at, k);
+            rd->at += k;
+            return (int64_t) k;
+        } };
+        CHECK (a.state->load (a.plugin, &is));
+        a.render (128, 128, l, r, stopped);
+        CHECK (peakIn (l, 64, 128) == 0.0f);
+        // A state from a newer version is refused outright.
+        std::vector<uint8_t> future (saved.begin(), saved.begin() + 12);
+        future[4] = 2; // version 2, no values
+        future[8] = 0;
+        Reader again { &future, 0 };
+        clap_istream is2 { &again, is.read };
+        CHECK (! a.state->load (a.plugin, &is2));
+    }
+    // Text that is not a finite number is refused, not clamped to the range's end.
+    {
+        Instance a;
+        double v = 0.0;
+        for (const char* bad : { "nan", "inf", "-inf", "1e999", "-5 Hz" })
+            CHECK (! a.params->text_to_value (a.plugin, a.id ("Cutoff"), bad, &v));
+        CHECK (a.params->text_to_value (a.plugin, a.id ("Cutoff"), "1.00 kHz", &v));
+    }
+    // Tempos at and past sense: the clock clamps to 1..1000 BPM, a missing or non-finite one reads as 120, and every
+    // block comes back (an infinite tempo once clocked forever without a frame passing).
+    for (double bpm : { 0.0, 2000.0, 1.0e308, (double) INFINITY, (double) NAN })
+    {
+        Instance a;
+        a.setup (clickPatch (a));
+        a.render (4800, 128, l, r, [bpm] (uint64_t at) { return Transport { true, bpm, (double) at / 24000.0 }; });
+        for (float s : l)
+            CHECK (std::isfinite (s));
+    }
+    // An infinite tempo sounds exactly as 120 BPM does.
+    {
+        Instance a, b;
+        a.setup (clickPatch (a));
+        b.setup (clickPatch (b));
+        a.render (48000, 128, fresh, r, [] (uint64_t at) { return Transport { true, INFINITY, (double) at / 24000.0 }; });
+        b.render (48000, 128, l, r, [] (uint64_t at) { return playingFrom (0.0, 120.0, 48000.0, at); });
+        CHECK (l == fresh && peakIn (l, 0, l.size()) > 0.01f);
     }
 }
 
@@ -1981,6 +2115,7 @@ int main (int argc, char** argv)
     testScreen (argv[2]);
     testPads();
     testChokes();
+    testRobustness();
     testExtremes();
     demos (argv[2]);
     entry->deinit();

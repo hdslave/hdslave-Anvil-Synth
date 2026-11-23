@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.6.1"
+#define ANVIL_VERSION "0.6.2"
 #endif
 
 namespace anvil
@@ -289,8 +289,8 @@ inline bool parseParam (const Param& p, const char* text, float& v)
     }
     char* end = nullptr;
     double x = std::strtod (text, &end);
-    if (end == text)
-        return false;
+    if (end == text || ! std::isfinite (x))
+        return false; // "nan", "inf" and their kin are no value, not the range's end
     while (*end == ' ')
         ++end;
     const bool kilo = (*end == 'k' || *end == 'K');
@@ -307,6 +307,8 @@ inline bool parseParam (const Param& p, const char* text, float& v)
         case Unit::semitones: v = (float) (x / (seqPitchOctaves * 12.0)); break;
         default: v = (float) x; break;
     }
+    if (! std::isfinite (v)) // a negative "Hz" and the like: no knob reads it
+        return false;
     v = clampParam (p, v);
     return true;
 }

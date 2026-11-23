@@ -282,8 +282,8 @@ class Engine
 public:
     void prepare (double hostRate, uint32_t)
     {
-        rate = hostRate;
-        inner = (float) (2.0 * hostRate);
+        rate = std::isfinite (hostRate) && hostRate > 0.0 ? hostRate : 48000.0; // a host's word, held to sense
+        inner = (float) (2.0 * rate);
         invInner = 1.0f / inner;
         chokeStep = (float) (1.0 / std::max (1.0, std::round ((double) chokeSeconds * rate))); // the fade's share a sample
         decimator.design();
@@ -314,10 +314,26 @@ public:
         ratchetsLeft = 0;
         hitKey = -1;
         fadeGain = 1.0f, fadeStep = 0.0f, chokedSinceHit = false;
+        // As a fresh instance's: no hit has fired (one on frame 0 next is no second hit of a frame), no step is
+        // held, and the last block's size is forgotten.
+        firedAt = ~(uint64_t) 0, firedLevel = 0.0f;
+        heldPitch = 0.0f, heldKey = false, heldQuantize = knob[ParamId::quantize];
+        stepLevel = 0.0f, velocityLonger = 1.0f;
+        lastBlock = 0;
         // A Run "press" made before this (the defaults switching Run on as the plug-in is made, a flush while
         // inactive) is no press: a first block that already plays starts where the song is, as any Play does.
         runPressed = false;
         dirty = true;
+        retarget();
+        for (int i = 0; i < smoothed; ++i)
+            smooth[i] = target[i];
+        moving = false;
+    }
+
+    // A state or preset loaded: the knobs' sound is taken at once, with no glide across the load (the host
+    // activates, then loads; a load over a ringing hit settles the same way).
+    void settle()
+    {
         retarget();
         for (int i = 0; i < smoothed; ++i)
             smooth[i] = target[i];
@@ -415,7 +431,10 @@ public:
         // the steps already played are not played again, one passed is played at once.
         const double moved = std::fabs (beats - position);
         if (! playing)
-            relocate (beats, window, false);
+            // A Play's "just past a step" is one host block (hdslaveOS's 128 frames), whatever block size this host
+            // calls with: the same Play heard in 1-, 37- or 4096-frame blocks plays the same steps. A jump keeps
+            // the block window, which is how late a loop's wrap inside a block can be seen.
+            relocate (beats, 128.0, false);
         else if (moved > 0.5 * perFrame && moved >= window * perFrame)
             relocate (beats, window, true);
         playing = true;
@@ -637,16 +656,12 @@ private:
         heldPitch = pitch;
         heldKey = key, heldQuantize = key ? 0.0f : knob[ParamId::quantize];
         stepLevel = v;
+        velocityLonger = 0.9f + 0.2f * v; // before retarget(): it sets the three decays with it
         retarget();
         smooth[pitch1] = target[pitch1];
         smooth[pitch2] = target[pitch2];
         if (knob[ParamId::velCutoff] != 0.0f || knob[ParamId::pitchCutoff] != 0.0f)
             smooth[cut] = target[cut]; // the step's own cutoff from its first sample
-        const float longer = 0.9f + 0.2f * v;
-        vcoEg.decay = decayOf (knob[ParamId::vcoDecay], longer);
-        vcfEg.decay = decayOf (knob[ParamId::vcfDecay], longer);
-        vcaEg.decay = decayOf (knob[ParamId::vcaDecay], longer);
-        velocityLonger = longer;
         vcoEg.trigger (v);
         vcfEg.trigger (v);
         vcaEg.trigger (v);
