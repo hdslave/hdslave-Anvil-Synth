@@ -2,7 +2,18 @@
 
 **An 8-step analog-style percussion synthesizer (DFAM / Edge panel & flow) as a CLAP plug-in for the Akai MPC Sample.**
 
-![Anvil custom screen running in hdslaveOS](docs/anvil-screen.gif)
+<table>
+  <tr>
+    <th width="25%">MPC Sample</th>
+    <th width="48%">macOS and Windows · CLAP</th>
+    <th width="27%">SP-16 · freesp16</th>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/anvil-screen.gif"><img src="docs/anvil-screen.gif" alt="Anvil custom screen running in hdslaveOS"></a></td>
+    <td align="center"><a href="mac-clap/assets/desktop-preview.gif"><img src="mac-clap/assets/desktop-preview.gif" alt="Eight-step percussion sequence running in Anvil"></a></td>
+    <td align="center"><a href="#freesp16"><img src="docs/sp16/steps.png" alt="Anvil pitch and velocity steps on the SP-16"></a></td>
+  </tr>
+</table>
 
 > **Desktop CLAP version (macOS & Windows):** A separate desktop CLAP build with all MPC screens on one interactive panel lives in [**`mac-clap/`**](mac-clap/) (`cd mac-clap && ./install-macos.sh`). The SP-16 build is [below](#freesp16).
 
