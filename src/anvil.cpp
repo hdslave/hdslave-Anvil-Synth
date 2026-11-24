@@ -50,7 +50,7 @@ struct Plugin
     // Melodee's screen (melodee_screen.h): the page, what the audio thread tells it, and what it changed. Values the
     // page sets are told to the host from the next process or flush (outgoing, a bit a row); buttons it presses act at
     // the next block (presses), as does a step it plays (audition, -1 none).
-    const clap_host_melodee_screen* hostScreen = nullptr;
+    const melodee_screen_host_t* hostScreen = nullptr;
     StepState stepState;
     Screen screen { values, stepState };
     ScreenSp16 screen16 { values, stepState };
@@ -254,7 +254,7 @@ void paramsFlush (const clap_plugin* plugin, const clap_input_events* in, const 
             {
                 handle (p, e, out, 0);
                 if (p.hostScreen != nullptr)
-                    p.hostScreen->request_paint (p.host);
+                    p.hostScreen->redraw (p.host, 0);
             }
             continue;
         }
@@ -269,7 +269,7 @@ void paramsFlush (const clap_plugin* plugin, const clap_input_events* in, const 
                 p.mainChanged.store (true, std::memory_order_release);
                 textMoved (p, v->param_id);
                 if (p.hostScreen != nullptr)
-                    p.hostScreen->request_paint (p.host);
+                    p.hostScreen->redraw (p.host, 0);
             }
         }
     }
@@ -330,7 +330,7 @@ void setAll (Plugin& p, const float* values)
     if (p.host != nullptr && p.host->request_callback != nullptr)
         p.host->request_callback (p.host);
     if (p.hostScreen != nullptr)
-        p.hostScreen->request_paint (p.host);
+        p.hostScreen->redraw (p.host, 0);
 }
 
 bool stateSave (const clap_plugin* plugin, const clap_ostream* stream)
@@ -448,7 +448,7 @@ bool pluginInit (const clap_plugin* plugin)
         p.engine.set (paramTable[i].id, paramTable[i].def);
     }
     p.hostParams = static_cast<const clap_host_params*> (p.host->get_extension (p.host, CLAP_EXT_PARAMS));
-    p.hostScreen = static_cast<const clap_host_melodee_screen*> (p.host->get_extension (p.host, CLAP_EXT_MELODEE_SCREEN_HOST));
+    p.hostScreen = static_cast<const melodee_screen_host_t*> (p.host->get_extension (p.host, MELODEE_SCREEN_CLAP_HOST));
     return true;
 }
 
@@ -600,10 +600,10 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
             p.stepState.running.store (running, std::memory_order_relaxed);
             p.stepState.hits.store (hits, std::memory_order_release);
             if (p.hostScreen != nullptr)
-                p.hostScreen->request_paint (p.host);
+                p.hostScreen->redraw (p.host, 0);
         }
         else if (p.valuesMoved && p.hostScreen != nullptr)
-            p.hostScreen->request_paint (p.host);
+            p.hostScreen->redraw (p.host, 0);
     }
     p.valuesMoved = false;
     p.framesDone.store (blockStart + (int64_t) frames, std::memory_order_release);
@@ -614,37 +614,39 @@ clap_process_status pluginProcess (const clap_plugin* plugin, const clap_process
 
 // Melodee's screen ---------------------------------------------------------------------------------------------
 
-hdui::Host hostOf (const melodee_screen_canvas_t* c)
+hdui::Host hostOf (const melodee_screen_frame_t* f)
 {
     hdui::Host h;
-    h.nowMs = c->now_ms;
-    h.accent = c->accent;
-    h.shift = c->shift;
-    h.playing = c->playing;
+    h.nowMs = f->time_ms;
+    h.accent = f->colour ? (0xff000000u | (f->colour & 0x00ffffffu)) : 0u;
+    h.shift = f->shift != 0;
+    h.playing = f->playing != 0;
     for (int k = 0; k < 3; ++k)
-        h.pot[k] = c->knobs[k].position, h.engaged[k] = c->knobs[k].engaged;
+        h.pot[k] = f->pots[k], h.engaged[k] = f->pots_live[k] != 0;
     return h;
 }
 
-bool screenPaint (const clap_plugin* plugin, const melodee_screen_canvas_t* c)
+bool screenDraw (const void* plugin, const melodee_screen_frame_t* f)
 {
-    if (c == nullptr || c->pixels == nullptr || c->width != (uint32_t) hdui::width || c->height != (uint32_t) hdui::height
-        || c->stride < c->width)
+    if (plugin == nullptr || f == nullptr || f->pixels == nullptr
+        || f->area != MELODEE_SCREEN_PAGE
+        || f->width != (uint32_t) hdui::width || f->height != (uint32_t) hdui::height
+        || f->stride < f->width)
         return false;
-    auto& p = of (plugin);
-    const hdui::Host h = hostOf (c);
+    auto& p = of (static_cast<const clap_plugin*> (plugin));
+    const hdui::Host h = hostOf (f);
     p.screen.update (h.nowMs);
-    const bool drew = p.screen.paint (h, c->pixels, (int) c->stride, c->whole);
-    bool busy = p.screenTouched || c->whole || c->playing;
+    const bool drew = p.screen.paint (h, f->pixels, (int) f->stride, f->redraw_all != 0);
+    bool busy = p.screenTouched || f->redraw_all != 0 || f->playing != 0;
     for (int k = 0; k < 3; ++k)
-        if (c->knobs[k].position != p.shownPots[k])
-            p.shownPots[k] = c->knobs[k].position, busy = true;
+        if (f->pots[k] != p.shownPots[k])
+            p.shownPots[k] = f->pots[k], busy = true;
     p.screenTouched = false;
     if (busy)
         p.screenBusyMs = h.nowMs;
     // The next pose while something moves (Melodee keeps painting while the idle instrument sleeps); at rest, none.
     if (p.hostScreen != nullptr && (h.nowMs < p.screenBusyMs || h.nowMs - p.screenBusyMs < screenRestMs))
-        p.hostScreen->request_paint (p.host);
+        p.hostScreen->redraw (p.host, 0);
     return drew;
 }
 
@@ -690,29 +692,31 @@ void publishEdits (Plugin& p, const hdui::Edits& edits)
         p.host->request_process (p.host);
 }
 
-bool screenInput (const clap_plugin* plugin, const melodee_screen_input_t* e)
+bool screenInput (const void* plugin, const melodee_screen_input_t* e)
 {
-    if (e == nullptr || e->kind > MELODEE_SCREEN_NUDGE)
+    if (plugin == nullptr || e == nullptr || e->kind > MELODEE_SCREEN_STEP)
         return false;
-    auto& p = of (plugin);
+    auto& p = of (static_cast<const clap_plugin*> (plugin));
     p.screenTouched = true; // the page animates again from its next paint
     hdui::Edits edits;
-    const bool used = p.screen.input ((hdui::Key) e->kind, e->value, e->shift, edits);
+    const bool used = p.screen.input ((hdui::Key) e->kind, e->value, e->shift != 0, edits);
     publishEdits (p, edits);
     if (used && p.hostScreen != nullptr)
-        p.hostScreen->request_paint (p.host);
+        p.hostScreen->redraw (p.host, edits.count != 0 ? MELODEE_SCREEN_RUN : 0);
     return used;
 }
 
-void screenKnobs (const clap_plugin* plugin, clap_id ids[3])
+void screenControls (const void* plugin, uint32_t ids[3])
 {
+    if (plugin == nullptr || ids == nullptr)
+        return;
     uint32_t chosen[3];
-    of (plugin).screen.knobs (chosen);
+    of (static_cast<const clap_plugin*> (plugin)).screen.knobs (chosen);
     for (int k = 0; k < 3; ++k)
-        ids[k] = chosen[k] == hdui::noParam ? CLAP_INVALID_ID : chosen[k];
+        ids[k] = chosen[k] == hdui::noParam ? MELODEE_SCREEN_NO_CONTROL : chosen[k];
 }
 
-const clap_plugin_melodee_screen screenExtension { screenPaint, screenInput, screenKnobs };
+const melodee_screen_t screenExtension { screenDraw, screenInput, screenControls };
 
 bool sixteenRender (const void* plugin, const sixteen_screen_surface_t* surface, bool force)
 {
@@ -764,7 +768,7 @@ const sixteen_plugin_screen sixteenExtension { nullptr, nullptr, sixteenRender, 
 
 const void* pluginExtension (const clap_plugin*, const char* id)
 {
-    if (std::strcmp (id, CLAP_EXT_MELODEE_SCREEN) == 0) return &screenExtension;
+    if (std::strcmp (id, MELODEE_SCREEN_CLAP) == 0) return &screenExtension;
     if (std::strcmp (id, SIXTEEN_EXT_SCREEN) == 0) return &sixteenExtension;
     if (std::strcmp (id, CLAP_EXT_PARAMS) == 0) return &paramsExtension;
     if (std::strcmp (id, CLAP_EXT_STATE) == 0) return &stateExtension;

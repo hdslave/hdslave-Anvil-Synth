@@ -315,5 +315,5 @@ newer (the MPC has 2.39).
 
 - The screen's type: Departure Mono, copyright 2022–2024 Helena Zhang, SIL Open Font License 1.1
   (`licenses/OFL-departure-mono.txt`); its glyphs are rasterized into `src/ui/font.h`.
-- The screen extension's header, `src/melodee_screen.h`, is hdslaveOS's, MIT.
+- The screen extension's header, `src/melodee_screen.h`, is Melodee's (`melodee.screen/1`), MIT.
 - CLAP headers: MIT license, `third_party/clap/LICENSE`.

@@ -42,8 +42,8 @@ const void* hostExtension (const clap_host*, const char* id)
                                                textRescans += (f & CLAP_PARAM_RESCAN_TEXT) != 0;
                                            },
                                            [] (const clap_host*, clap_id, clap_param_clear_flags) {}, [] (const clap_host*) { ++flushes; } };
-    static const clap_host_melodee_screen screen { [] (const clap_host*) { ++paints; } };
-    if (std::strcmp (id, CLAP_EXT_MELODEE_SCREEN_HOST) == 0) return &screen;
+    static const melodee_screen_host_t screen { [] (const void*, uint32_t) { ++paints; } };
+    if (std::strcmp (id, MELODEE_SCREEN_CLAP_HOST) == 0) return &screen;
     static const clap_host_preset_load presetLoad {
         [] (const clap_host*, uint32_t, const char*, const char*, int32_t, const char*) { ++presetErrors; },
         [] (const clap_host*, uint32_t, const char*, const char*) { ++presetsLoaded; },
@@ -1416,22 +1416,23 @@ void testQuantize()
 void testScreen (const std::string& folder)
 {
     Instance a;
-    const auto* screen = static_cast<const clap_plugin_melodee_screen*> (a.plugin->get_extension (a.plugin, CLAP_EXT_MELODEE_SCREEN));
+    const auto* screen = static_cast<const melodee_screen_t*> (a.plugin->get_extension (a.plugin, MELODEE_SCREEN_CLAP));
     CHECK (screen != nullptr);
     if (screen == nullptr)
         return;
-    std::vector<uint32_t> pixels (MELODEE_SCREEN_WIDTH * MELODEE_SCREEN_HEIGHT, 0);
-    melodee_screen_canvas_t canvas {};
-    canvas.pixels = pixels.data();
-    canvas.width = MELODEE_SCREEN_WIDTH, canvas.height = MELODEE_SCREEN_HEIGHT, canvas.stride = MELODEE_SCREEN_WIDTH;
-    canvas.accent = 0xffff8a3d;
-    for (auto& k : canvas.knobs)
-        k = { -1, true };
+    std::vector<uint32_t> pixels (MELODEE_SCREEN_WIDTH * MELODEE_SCREEN_PAGE_HEIGHT, 0);
+    melodee_screen_frame_t frame {};
+    frame.pixels = pixels.data();
+    frame.width = MELODEE_SCREEN_WIDTH, frame.height = MELODEE_SCREEN_PAGE_HEIGHT, frame.stride = MELODEE_SCREEN_WIDTH;
+    frame.area = MELODEE_SCREEN_PAGE;
+    frame.colour = 0x00ff8a3du;
+    for (int k = 0; k < 3; ++k)
+        frame.pots[k] = -1, frame.pots_live[k] = 1;
     uint64_t now = 1000;
-    auto paint = [&] (bool whole = false) { canvas.whole = whole, canvas.now_ms = now; return screen->paint (a.plugin, &canvas); };
+    auto paint = [&] (bool whole = false) { frame.redraw_all = whole ? 1u : 0u, frame.time_ms = now; return screen->draw (a.plugin, &frame); };
     auto shot = [&] (const char* name) { paint (true); CHECK (writePng ((folder + "/screen-" + name + ".png").c_str(), pixels.data(), 320, 218, 320, 2)); };
-    auto in = [&] (uint32_t kind, int value, bool shift = false) { melodee_screen_input_t e { kind, value, shift }; return screen->input (a.plugin, &e); };
-    auto knobs = [&] () { std::vector<clap_id> ids (3); screen->knobs (a.plugin, ids.data()); return ids; };
+    auto in = [&] (uint32_t kind, int value, bool shift = false) { melodee_screen_input_t e { kind, value, shift ? 1u : 0u }; return screen->input (a.plugin, &e); };
+    auto knobs = [&] () { std::vector<uint32_t> ids (3); screen->controls (a.plugin, ids.data()); return ids; };
     auto play = [&] (uint32_t frames, bool playing, double fromBeats, OutEvents* out = nullptr) {
         std::vector<float> l, r;
         a.render (frames, 128, l, r, [&] (uint64_t at) { return playing ? playingFrom (fromBeats, 120.0, 48000.0, at) : Transport { false, 120.0, 0.0 }; }, {}, out);
@@ -1506,15 +1507,15 @@ void testScreen (const std::string& folder)
     const int paintsBefore = paints;
     play (48000 + 6000, true, 0.0);
     CHECK (paints > paintsBefore + 4);
-    canvas.playing = true;
+    frame.playing = 1;
     const int paintsAsked = paints;
     CHECK (paint());
     CHECK (paints > paintsAsked); // the page schedules its next pose
     shot ("steps");
     // VCO: Plus moves to the next group; K1-K3 follow the cursor; Push edits, the wheel changes 1-2 FM Amt, the
     // host hears it after the next block, the engine plays it.
-    CHECK (in (MELODEE_SCREEN_NUDGE, 1));
-    CHECK ((knobs() == std::vector<clap_id> { a.id ("VCO Decay"), a.id ("1-2 FM Amt"), a.id ("VCO EG > FM 1-2 Amt") }));
+    CHECK (in (MELODEE_SCREEN_STEP, 1));
+    CHECK ((knobs() == std::vector<uint32_t> { a.id ("VCO Decay"), a.id ("1-2 FM Amt"), a.id ("VCO EG > FM 1-2 Amt") }));
     CHECK (in (MELODEE_SCREEN_WHEEL, 1));
     CHECK (in (MELODEE_SCREEN_PUSH, 0));
     const int flushesBefore = flushes, rescansBefore = rescans;
@@ -1525,18 +1526,18 @@ void testScreen (const std::string& folder)
     OutEvents told;
     play (128, true, 2.25, &told);
     CHECK (std::any_of (told.values.begin(), told.values.end(), [&] (auto& v) { return v.first == a.id ("1-2 FM Amt") && std::fabs (v.second - 0.125) < 1e-6; }));
-    canvas.knobs[1] = { 90, false }; // K2 has yet to meet its value: the card shows where to move it
+    frame.pots[1] = 90, frame.pots_live[1] = 0; // K2 has yet to meet its value: the card shows where to move it
     shot ("vco-editing");
-    canvas.knobs[1] = { -1, true };
+    frame.pots[1] = -1, frame.pots_live[1] = 1;
     CHECK (in (MELODEE_SCREEN_PUSH, 0)); // leave editing
     // VCF, then SEQ: Trigger is a button (no pot); Push on it plays the step the sequence is on.
-    CHECK (in (MELODEE_SCREEN_NUDGE, 1) && in (MELODEE_SCREEN_NUDGE, 1));
+    CHECK (in (MELODEE_SCREEN_STEP, 1) && in (MELODEE_SCREEN_STEP, 1));
     shot ("vcf");
     for (int i = 0; i < 4; ++i)
-        in (MELODEE_SCREEN_NUDGE, 1);
-    CHECK (! in (MELODEE_SCREEN_NUDGE, 1)); // the last group
+        in (MELODEE_SCREEN_STEP, 1);
+    CHECK (! in (MELODEE_SCREEN_STEP, 1)); // the last group
     CHECK (in (MELODEE_SCREEN_WHEEL, 9));
-    CHECK ((knobs() == std::vector<clap_id> { CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID })); // Trigger, Advance: buttons
+    CHECK ((knobs() == std::vector<uint32_t> { MELODEE_SCREEN_NO_CONTROL, MELODEE_SCREEN_NO_CONTROL, MELODEE_SCREEN_NO_CONTROL })); // Trigger, Advance: buttons
     shot ("seq");
     a.setup ({ { "VCA Decay", 1.0 } });
     play (24000, false, 0.0);
@@ -1550,9 +1551,9 @@ void testScreen (const std::string& folder)
     in (MELODEE_SCREEN_WHEEL, -1); // Minor (set above) to Major
     CHECK (a.value ("Quantize") == a.valueOf ("Quantize", "Major"));
     in (MELODEE_SCREEN_PUSH, 0);
-    canvas.shift = true;
+    frame.shift = 1;
     shot ("shift");
-    canvas.shift = false;
+    frame.shift = 0;
 }
 
 // 0.6: the pads. With Run on (the sequencer's own switch, the transport playing or not) every MIDI note plays the step
@@ -1830,11 +1831,11 @@ void testPads()
         Instance a, panel;
         a.setup (padPatch (a, { { "Run", 0.0 } }));
         panel.setup (padPatch (panel, { { "Run", 0.0 } }));
-        const auto* screen = static_cast<const clap_plugin_melodee_screen*> (a.plugin->get_extension (a.plugin, CLAP_EXT_MELODEE_SCREEN));
+        const auto* screen = static_cast<const melodee_screen_t*> (a.plugin->get_extension (a.plugin, MELODEE_SCREEN_CLAP));
         CHECK (screen != nullptr);
         if (screen != nullptr)
         {
-            melodee_screen_input_t wheel { MELODEE_SCREEN_WHEEL, 2, false }, push { MELODEE_SCREEN_PUSH, 0, false };
+            melodee_screen_input_t wheel { MELODEE_SCREEN_WHEEL, 2, 0 }, push { MELODEE_SCREEN_PUSH, 0, 0 };
             CHECK (screen->input (a.plugin, &wheel) && screen->input (a.plugin, &push));
             const auto got = run (a, 24000, false, {});
             CHECK (loudest (got) > 0.05f && got == run (panel, 24000, false, { { 0, value ("Advance", 1.0) }, { 0, value ("Advance", 1.0) }, { 0, value ("Trigger", 1.0) } }));
