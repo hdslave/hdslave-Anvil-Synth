@@ -4,4 +4,6 @@ The ANVIL lettering, checker ribbon and wire ring are original artwork made for 
 
 Departure Mono by Helena Zhang supplies the 7 × 12 interface glyphs under the SIL Open Font License 1.1. [Font](assets/fonts/DepartureMono-Regular.otf) · [Licence](licenses/OFL-departure-mono.txt)
 
+The SP-16 uses Barlow SemiBold by the Barlow Project Authors, licensed under the SIL Open Font License 1.1. [Font](assets/fonts/Barlow-SemiBold.ttf) · [Licence](licenses/OFL-barlow.txt) · [Glyph generator](tools/ui_preview/sp16_font.py)
+
 The preview compositor takes its soft keys from a capture of Melodee running the Anvil plug-in. The parameter displays and sequence graphics are rendered by Anvil itself.

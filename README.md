@@ -41,11 +41,13 @@ stayed open or was closed, and none survives a deactivation. The sound is again 
 
 ## freesp16
 
-A 32-bit ARM build for [freesp16](https://freesp16.github.io/) on the SP-16. freesp16 keeps its own screen chrome and its six encoders. Anvil draws the 780×285 body between them and names the six parameters for the lit tab (`org.sixteen.screen/1`). STEPS, VCO, MIX, VCF, VCA/PATCH and SEQ are on screen. VCO and SEQ each have a second bank: tap the tab again.
+A 32-bit ARM build for [freesp16](https://freesp16.github.io/) on the SP-16. freesp16 keeps its own screen chrome and its six encoders. Anvil draws the 780×285 body between them and names the six parameters for the lit tab (`org.sixteen.screen/1`). STEPS, VCO, MIX, VCF, VCA and SEQ are on screen. VCO and SEQ each have a second bank: tap the tab again.
 
 The download is [hdslave Anvil 0.6.4 for freesp16](https://github.com/hdslave/hdslave-Anvil-Synth/releases/tag/v0.6.4-freesp16). Unzip it at the root of the USB stick freesp16 starts from. `Anvil.clap` then sits in `freesp16-data/freesp16/Plugins/`. On a track: TRACK TYPE, PLUGIN, SELECT PLUGIN, **hdslave Anvil**, OPEN UI.
 
 The object is ARMv7-A, softfp, glibc 2.13, and it needs only `libm` and `libc`. The host tests passed on it under qemu-arm (521,408 checks), and the MPC build's fingerprint did not move. On 2026-11-23 it was loaded on a unit and it worked.
+
+The following screens show the SP-16 editor in this checkout. The selected step is violet and the playing step is lime. On STEPS, **SEQ** marks the selected step’s pitch and velocity on knobs 1–2. **PATCH** marks cutoff, resonance, filter decay and amp decay on knobs 3–6 for the whole patch. Drag a parameter card up or right to increase its value, or down or left to decrease it. Touching a card on VCO or SEQ also selects its encoder bank. The six hardware knobs can continue the edit from the displayed values.
 
 **STEPS**
 

@@ -33,7 +33,8 @@ struct Drift
     }
 };
 
-inline void underprint (const Raster& r, int origin, const Drift& drift)
+template <size_t Pitch = sizeof (art::contours[0])>
+inline void underprint (const Raster& r, int origin, const Drift& drift, const uint8_t (*plate)[Pitch] = art::contours)
 {
     static constexpr auto inks = [] {
         std::array<Ink,193> ramp {};
@@ -44,8 +45,8 @@ inline void underprint (const Raster& r, int origin, const Drift& drift)
     auto level = [](const uint8_t* row, int x) { return (row[x/4] >> (2*(x%4))) & 3; };
     for (int y = 0; y < 59; ++y)
     {
-        const auto* a = art::contours[y + drift.top];
-        const auto* b = art::contours[y + drift.top + 1];
+        const auto* a = plate[y + drift.top];
+        const auto* b = plate[y + drift.top + 1];
         for (int x = 0; x < r.w; ++x)
         {
             const int u = origin + x + drift.left;
