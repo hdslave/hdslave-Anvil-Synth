@@ -160,7 +160,8 @@ On a plug-in track at hdslaveOS's defaults (octave 2, key C, Chromatic) pads 1â€
   a silence) waits for the fade's end, 1.5 ms at most, and plays whole from silence: the choke always finishes and the
   gain never steps (to 0.6.5 the fade went on over the hit and ended in a click; 0.6.6 turned the fade back up, which
   left the choked hit ringing under a softer one). A choke or All Sound Off that arrives while nothing is heard is done
-  at once and leaves the next hit whole (to 0.6.5 it faded that hit too). hdslaveOS
+  at once and leaves the next hit whole and as it would be without it, a knob turned on its frame taken at once (to
+  0.6.5 it faded that hit too). hdslaveOS
   sends them when it silences the track (its note chokes for the keys played), not on Stop. A sequencer step, Trigger's and the page's
   have no key: a key's choke leaves them, key âˆ’1 and All Sound Off stop them. Reset All Controllers (CC 121) and All
   Notes Off (CC 123) do nothing (no key is held, there is no pedal), and no controller is a parameter. The sequence's
@@ -303,7 +304,8 @@ blocks of 1, 37, 128 and 4096 frames); a choke stopping the key's hit (and not a
 nothing, the Ratchet hits after a choke gone, a choke and a hit on one frame in event order, a hit inside the fade
 (sounding once the fade is out, with no step in the gain at 0 to 71 frames in, a softer one at its own level, a choke
 before it sounds stopping it), nothing of the choked hit after the fade (a tone and noise, a choke and All Sound Off),
-a choke or All Sound Off while nothing is heard (the VCO's envelope still running too) leaving the next hit whole, and
+a choke or All Sound Off while nothing is heard (the VCO's envelope still running too) leaving the next hit whole
+(to the bit as without it, with Volume, Resonance or VCO 2 Level turned on its frame and the hit 16 frames on), and
 the same output in blocks of 1, 37, 128 and 4096 frames with chokes in it;
 each Direction (the order read back from the steps' levels; Random the same twice); Chance (0 %, 50 % the same twice);
 Quantize (each scale's note from the pitch heard; the Pitch texts by it, and the host asked to read them again); the

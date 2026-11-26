@@ -2081,6 +2081,34 @@ void testChokes()
             CHECK (out == ref);
         }
     }
+    // The same with a knob turned on the choke's frame and the hit 16 frames later, inside the decimator's length (as
+    // the sequencer's step lands in the block after hdslaveOS's silence): nothing sounds, so the knob is taken at once,
+    // as without the choke. To 0.6.7's first build the choke emptied the decimator, which then counted as sounding for
+    // 25 frames, and the knob eased in under the hit instead (Volume off by up to 0.10).
+    {
+        const Values shortHit { { "VCA Decay", 0.0 } };
+        for (const char* knob : { "Volume", "Resonance", "VCO 2 Level" })
+            for (bool rungOut : { false, true }) // never hit, or a hit rung out before
+            {
+                Instance a, b;
+                a.setup (padPatch (a, shortHit)), b.setup (padPatch (b, shortHit));
+                Timeline with, without;
+                if (rungOut) with.push_back ({ 100, noteOn (38, 1.0) }), without.push_back ({ 100, noteOn (38, 1.0) });
+                with.push_back ({ 24000, midi (0xb0, 120, 0) });
+                for (Timeline* t : { &with, &without })
+                    t->push_back ({ 24000, value (knob, 0.9) }), t->push_back ({ 24016, noteOn (40, 1.0) });
+                const auto out = run (a, 48000, false, with), ref = run (b, 48000, false, without);
+                CHECK (peakIn (ref, 23000, 24000) == 0.0f && peakIn (ref, 24016, 30000) > 0.01f);
+                if (out != ref)
+                {
+                    double worst = 0.0;
+                    for (size_t i = 0; i < out.size(); ++i) worst = std::max (worst, (double) std::fabs (out[i] - ref[i]));
+                    std::printf ("  %s turned on a silent choke's frame%s: the hit after it off by up to %.4f\n", knob,
+                                 rungOut ? " (a hit rung out)" : "", worst);
+                }
+                CHECK (out == ref);
+            }
+    }
     // A hit the sequencer itself played (the host playing, no key ever pressed): All Sound Off and a choke of key -1
     // stop it and the next step plays as ever; a named key's choke leaves it ringing. (The pad patch's 10 s decay
     // rings through the step at frame 12000, so the windows sit inside one step.)

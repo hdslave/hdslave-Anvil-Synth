@@ -703,7 +703,8 @@ private:
     {
         fadeGain = 1.0f, fadeStep = 0.0f;
         vcoEg = vcfEg = vcaEg = Envelope {};
-        decimator.clear();
+        if (! decimator.silent()) // one already silent keeps its count, so the knobs are still taken at once
+            decimator.clear();
         if (waiting.due)
             waiting.due = false, hit (waiting.pitch, waiting.key, waiting.level);
     }
