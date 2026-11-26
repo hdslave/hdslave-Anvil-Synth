@@ -1970,6 +1970,56 @@ void testChokes()
         CHECK (peakIn (again, done, again.size()) > 0.01f);
         CHECK (peakIn (run (b, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) } }), done, 48000) < 1e-4f);
     }
+    // The fade a new hit lands in turns back up from where it is, so the gain never steps. To 0.6.5 the fade went on
+    // over the new hit and its end set the gain from 0 back to 1 in one sample (a step of 0.10 to 0.18 here, where
+    // the hit alone moves at most 0.014 a sample). At 0 frames the choke and the note share a frame, as hdslaveOS sends
+    // a block's events.
+    {
+        Instance x, y;
+        x.setup (padPatch (x)), y.setup (padPatch (y));
+        auto largestStep = [] (const std::vector<float>& v, size_t from, size_t to) {
+            float m = 0.0f;
+            for (size_t i = std::max<size_t> (from, 1); i < std::min (to, v.size()); ++i) m = std::max (m, std::fabs (v[i] - v[i - 1]));
+            return m;
+        };
+        const float ringing = largestStep (run (x, 48000, false, { { hit, noteOn (38, 1.0) } }), cut, cut + 400);
+        const float alone = largestStep (run (y, 48000, false, { { cut, noteOn (40, 1.0) } }), cut, cut + 400);
+        for (uint64_t gap : { 0, 16, 40, 71 })
+        {
+            Instance a;
+            a.setup (padPatch (a));
+            const auto out = run (a, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) }, { cut + gap, noteOn (40, 1.0) } });
+            const float worst = largestStep (out, cut, cut + 400);
+            if (worst >= 2.0f * std::max (ringing, alone))
+                std::printf ("  a hit %d frames into a choke's fade: the output steps by %.4f (the ringing hit %.4f, the hit alone %.4f)\n", (int) gap,
+                             worst, ringing, alone);
+            CHECK (worst < 2.0f * std::max (ringing, alone));
+            CHECK (peakIn (out, done, out.size()) > 0.01f);
+        }
+    }
+    // A choke or All Sound Off that reaches Anvil while nothing sounds (hdslaveOS silences every plug-in this way) leaves
+    // the next hit as it would be. To 0.6.5 the fade waited, and the next hit, however much later, was faded down for
+    // 1.5 ms and then stepped back up.
+    {
+        const Values shortHit { { "VCA Decay", 0.0 } };
+        for (int how = 0; how < 3; ++how)
+        {
+            Instance a, b;
+            a.setup (padPatch (a, shortHit)), b.setup (padPatch (b, shortHit));
+            Timeline with { { 24000, noteOn (40, 1.0) } }, without = with;
+            if (how == 0) with.push_back ({ 100, midi (0xb0, 120, 0) });
+            if (how == 1) with.push_back ({ 100, chokeKey (-1) });
+            if (how == 2) // a hit rung out, then All Sound Off
+            {
+                with.push_back ({ 100, noteOn (38, 1.0) }), without.push_back ({ 100, noteOn (38, 1.0) });
+                with.push_back ({ 20000, midi (0xb0, 120, 0) });
+            }
+            const auto out = run (a, 48000, false, with), ref = run (b, 48000, false, without);
+            CHECK (peakIn (ref, 23000, 24000) == 0.0f && peakIn (ref, 24000, 30000) > 0.01f);
+            if (out != ref) std::printf ("  case %d: the hit after a silent choke is not the hit as it would be\n", how);
+            CHECK (out == ref);
+        }
+    }
     // A hit the sequencer itself played (the host playing, no key ever pressed): All Sound Off and a choke of key -1
     // stop it and the next step plays as ever; a named key's choke leaves it ringing. (The pad patch's 10 s decay
     // rings through the step at frame 12000, so the windows sit inside one step.)

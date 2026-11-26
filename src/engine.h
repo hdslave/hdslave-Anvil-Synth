@@ -652,6 +652,8 @@ private:
         firedAt = now, firedLevel = v;
         hitKey = from;
         chokedSinceHit = false; // a hit after a choke: the fade is no longer its
+        if (fadeStep > 0.0f)
+            fadeStep = -chokeStep; // a hit inside a choke's fade: the gain turns back up from where it is, never steps
         ++played;
         heldPitch = pitch;
         heldKey = key, heldQuantize = key ? 0.0f : knob[ParamId::quantize];
@@ -673,8 +675,9 @@ private:
     // after it on the same frame plays: it is no softer second hit of that frame.
     void stop()
     {
-        if (fadeStep == 0.0f) // a second choke inside the fade: it goes on from where it is
-            fadeGain = 1.0f, fadeStep = chokeStep;
+        if (fadeStep == 0.0f) // inside a fade (or one a hit turned back up), it goes down from where it is
+            fadeGain = 1.0f;
+        fadeStep = chokeStep;
         chokedSinceHit = true;
         ratchetsLeft = 0;
         firedAt = ~(uint64_t) 0;
@@ -742,6 +745,7 @@ private:
                 for (int k = 0; k < smoothed; ++k)
                     smooth[k] = target[k];
                 moving = false;
+                fadeGain = 1.0f, fadeStep = 0.0f; // a choke's fade over silence is over at once (the next hit is whole)
                 const uint32_t n = frames - i;
                 std::memset (left + i, 0, sizeof (float) * n);
                 if (right)
@@ -787,12 +791,14 @@ private:
             {
                 y *= fadeGain;
                 fadeGain -= fadeStep;
-                if (fadeGain <= 0.0f) // out: the envelopes cleared, as a hit that never was (unless one struck since)
+                if (fadeGain <= 0.0f) // out: the envelopes cleared, as a hit that never was
                 {
                     fadeGain = 1.0f, fadeStep = 0.0f;
                     if (chokedSinceHit)
                         vcoEg = vcfEg = vcaEg = Envelope {};
                 }
+                else if (fadeGain >= 1.0f) // turned back up by a hit: whole again
+                    fadeGain = 1.0f, fadeStep = 0.0f;
             }
             left[i] = y;
             if (right)

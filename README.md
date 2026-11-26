@@ -17,7 +17,7 @@
 
 > **Desktop CLAP version (macOS & Windows):** A separate desktop CLAP build with all MPC screens on one interactive panel lives in [**`mac-clap/`**](mac-clap/) (`cd mac-clap && ./install-macos.sh`). The SP-16 build is [below](#freesp16).
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.5). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.6). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 The custom screen uses `melodee.screen/1` on Melodee 0.7 and hdslaveOS based on it. Open Edit on the plug-in track or select PANEL on Stage.
 
@@ -156,7 +156,9 @@ On a plug-in track at hdslaveOS's defaults (octave 2, key C, Chromatic) pads 1�
 - A **choke** (a CLAP note choke, or a host's choke group) and MIDI's **All Sound Off** (CC 120 at 0, on any channel)
   stop the hit that sounds: the choke of the key that played it, or key −1 / All Sound Off, whatever sounds; the output
   fades out in 1.5 ms, without a click, the hit's envelopes are cleared with it, and its Ratchet hits still to come do
-  not play. A hit inside the fade plays as soon as the fade is out (a pad pressed straight after a silence). hdslaveOS
+  not play. A hit inside the fade (a pad pressed straight after a silence) plays at once: the fade turns back up from
+  where it is, so the gain never steps (to 0.6.5 the fade went on over the hit and ended in a click). A choke or All
+  Sound Off that arrives while nothing sounds leaves the next hit whole (to 0.6.5 it faded that hit too). hdslaveOS
   sends them when it silences the track (its note chokes for the keys played), not on Stop. A sequencer step, Trigger's and the page's
   have no key: a key's choke leaves them, key −1 and All Sound Off stop them. Reset All Controllers (CC 121) and All
   Notes Off (CC 123) do nothing (no key is held, there is no pedal), and no controller is a parameter. The sequence's
@@ -259,8 +261,8 @@ Instructions a 128-frame block takes, from `tools/bench.sh` (callgrind):
 
 | Case | Instructions | Share of one A55 core at 1 instruction a cycle |
 |---|---|---|
-| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 82,000 | 1.7 % |
-| A short percussive pattern | about 76,000 | 1.6 % |
+| Everything busy (FM, its envelope, sync, pink noise on the cutoff, resonance, the VCA never closing) | about 93,500 | 1.9 % |
+| A short percussive pattern | about 87,000 | 1.8 % |
 | Stopped | about 600 | 0.01 % |
 
 While the VCA is closed between hits the oscillators and filter are skipped. The voice's two samples a frame, and the
@@ -296,7 +298,9 @@ the ±5 octaves of a step's Pitch), and to the bit as a step of their own throug
 Trigger and Advance afterwards; Notes: Steps and Pad Kit with Run off; the page's Push with Run off; the same output in
 blocks of 1, 37, 128 and 4096 frames); a choke stopping the key's hit (and not another key's, nor the sequencer's: key
 −1 and All Sound Off stop that), All Sound Off on any channel, Reset All Controllers and All Notes Off changing
-nothing, the Ratchet hits after a choke gone, a choke and a hit on one frame in event order, a hit inside the fade, and
+nothing, the Ratchet hits after a choke gone, a choke and a hit on one frame in event order, a hit inside the fade
+(sounding, and with no step in the gain at 0 to 71 frames in), a choke or All Sound Off while silent leaving the next
+hit whole, and
 the same output in blocks of 1, 37, 128 and 4096 frames with chokes in it;
 each Direction (the order read back from the steps' levels; Random the same twice); Chance (0 %, 50 % the same twice);
 Quantize (each scale's note from the pitch heard; the Pitch texts by it, and the host asked to read them again); the
