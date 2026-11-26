@@ -1961,19 +1961,40 @@ void testChokes()
                == run (c, 24000, false, { { hit, noteOn (38, 1.0) } }));
         CHECK (peakIn (run (b, 24000, false, { { hit, noteOn (38, 1.0) }, { hit, chokeKey (38) } }), hit + 480, 24000) < 1e-4f);
     }
-    // A hit while the fade runs: it plays, from where the envelopes are (a new hit, not a second step).
+    // A hit while the fade runs: it plays once the fade is out (a new hit, not a second step); a choke of its key
+    // before then stops it before it sounds.
     {
-        Instance a, b;
-        a.setup (padPatch (a));
-        b.setup (padPatch (b));
+        Instance a, b, c;
+        a.setup (padPatch (a)), b.setup (padPatch (b)), c.setup (padPatch (c));
         const auto again = run (a, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) }, { cut + 16, noteOn (40, 1.0) } });
         CHECK (peakIn (again, done, again.size()) > 0.01f);
         CHECK (peakIn (run (b, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) } }), done, 48000) < 1e-4f);
+        const auto stopped = run (c, 48000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) }, { cut + 16, noteOn (40, 1.0) },
+                                                    { cut + 40, chokeKey (40) } });
+        CHECK (peakIn (stopped, cut + 80, stopped.size()) == 0.0f);
     }
-    // The fade a new hit lands in turns back up from where it is, so the gain never steps. To 0.6.5 the fade went on
-    // over the new hit and its end set the gain from 0 back to 1 in one sample (a step of 0.10 to 0.18 here, where
-    // the hit alone moves at most 0.014 a sample). At 0 frames the choke and the note share a frame, as hdslaveOS sends
-    // a block's events.
+    // When the fade is out, nothing of the choked hit is left: to 0.6.6 the 47-tap decimator, before the fade, still
+    // held about a dozen frames of it, which then played at full gain (here 0.02 on the pad, 0.15 on noise, 72 to 84
+    // frames after the choke). A choke and All Sound Off, a tone and noise.
+    {
+        const Values noise { { "VCO 1 Level", 0.0 }, { "Noise Level", 1.0 }, { "Volume", 0.8 } };
+        for (int patch = 0; patch < 2; ++patch)
+            for (int how = 0; how < 2; ++how)
+            {
+                Instance a;
+                a.setup (padPatch (a, patch == 1 ? noise : Values {}));
+                const auto out = run (a, 24000, false, { { hit, noteOn (38, 1.0) }, { cut, how == 0 ? chokeKey (38) : midi (0xb0, 120, 0) } });
+                CHECK (peakIn (out, cut - 200, cut) > 0.05f);
+                if (peakIn (out, cut + 74, cut + 480) >= 1e-4f)
+                    std::printf ("  %s, %s: %.4f after the fade\n", patch == 1 ? "noise" : "the pad", how == 0 ? "a choke" : "CC 120",
+                                 peakIn (out, cut + 74, cut + 480));
+                CHECK (peakIn (out, cut + 74, cut + 480) < 1e-4f);
+            }
+    }
+    // A hit inside a choke's fade waits for the fade's end (1.5 ms at most) and plays whole, from silence, so the gain
+    // never steps. To 0.6.5 the fade went on over the new hit and its end set the gain from 0 back to 1 in one sample
+    // (a step of 0.10 to 0.18 here, where the hit alone moves at most 0.014 a sample). At 0 frames the choke and the
+    // note share a frame, as hdslaveOS sends a block's events.
     {
         Instance x, y;
         x.setup (padPatch (x)), y.setup (padPatch (y));
@@ -1996,6 +2017,46 @@ void testChokes()
             CHECK (worst < 2.0f * std::max (ringing, alone));
             CHECK (peakIn (out, done, out.size()) > 0.01f);
         }
+    }
+    // A softer hit than the tail it lands on, with the choke on its frame or inside the fade: the choke still ends the
+    // choked hit, and 10 to 20 ms on the level is the soft hit's, as when it is struck alone 72 frames later. 0.6.6
+    // turned the fade back up and the soft hit's envelopes kept the louder tail falling: the choked hit rang on.
+    {
+        const auto rmsIn = [] (const std::vector<float>& v, size_t from, size_t to) {
+            double e = 0.0;
+            for (size_t i = from; i < to; ++i) e += (double) v[i] * v[i];
+            return std::sqrt (e / (double) (to - from));
+        };
+        Instance x, y;
+        x.setup (padPatch (x)), y.setup (padPatch (y));
+        const auto loud = run (x, 24000, false, { { hit, noteOn (38, 1.0) } });
+        const auto soft = run (y, 24000, false, { { cut + 72, noteOn (40, 0.2) } });
+        const double ringing = rmsIn (loud, cut + 480, cut + 960), alone = rmsIn (soft, cut + 480, cut + 960);
+        CHECK (alone > 1e-3 && ringing > 3.0 * alone);
+        for (uint64_t gap : { 0, 16, 60 })
+        {
+            Instance a;
+            a.setup (padPatch (a));
+            const auto out = run (a, 24000, false, { { hit, noteOn (38, 1.0) }, { cut, chokeKey (38) }, { cut + gap, noteOn (40, 0.2) } });
+            const double level = rmsIn (out, cut + 480, cut + 960);
+            if (std::fabs (level - alone) >= 0.1 * alone)
+                std::printf ("  a soft hit %d frames into a choke's fade: %.4f where it alone is %.4f (the choked hit %.4f)\n", (int) gap, level,
+                             alone, ringing);
+            CHECK (std::fabs (level - alone) < 0.1 * alone);
+        }
+    }
+    // A choke when nothing is heard (the VCA closed, the VCO's envelope still running) is done at once: a hit just
+    // after it plays whole, as one 200 frames later. 0.6.6 faded over the silence and a hit inside it faded up.
+    {
+        const Values longVco { { "VCA Decay", 0.0 }, { "VCO Decay", 1.0 }, { "VCO 1 EG Amt", 0.6 } };
+        Instance a, b;
+        a.setup (padPatch (a, longVco)), b.setup (padPatch (b, longVco));
+        const auto soon = run (a, 36000, false, { { 100, noteOn (38, 1.0) }, { 20000, chokeKey (38) }, { 20016, noteOn (40, 1.0) } });
+        const auto later = run (b, 36000, false, { { 100, noteOn (38, 1.0) }, { 20000, chokeKey (38) }, { 20216, noteOn (40, 1.0) } });
+        CHECK (peakIn (soon, 19000, 20000) == 0.0f && peakIn (soon, 20016, 24000) > 0.01f);
+        const bool same = std::equal (soon.begin() + 20016, soon.begin() + 30000, later.begin() + 20216);
+        if (! same) std::printf ("  a hit just after a choke of a silent hit is not whole\n");
+        CHECK (same);
     }
     // A choke or All Sound Off that reaches Anvil while nothing sounds (hdslaveOS silences every plug-in this way) leaves
     // the next hit as it would be. To 0.6.5 the fade waited, and the next hit, however much later, was faded down for

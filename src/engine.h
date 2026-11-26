@@ -313,7 +313,7 @@ public:
         clockedLoud = false;
         ratchetsLeft = 0;
         hitKey = -1;
-        fadeGain = 1.0f, fadeStep = 0.0f, chokedSinceHit = false;
+        fadeGain = 1.0f, fadeStep = 0.0f, waiting = Waiting {};
         // As a fresh instance's: no hit has fired (one on frame 0 next is no second hit of a frame), no step is
         // held, and the last block's size is forgotten.
         firedAt = ~(uint64_t) 0, firedLevel = 0.0f;
@@ -651,9 +651,20 @@ private:
             return;
         firedAt = now, firedLevel = v;
         hitKey = from;
-        chokedSinceHit = false; // a hit after a choke: the fade is no longer its
-        if (fadeStep > 0.0f)
-            fadeStep = -chokeStep; // a hit inside a choke's fade: the gain turns back up from where it is, never steps
+        if (fadeStep != 0.0f)
+        {
+            // A hit inside a choke's fade waits for its end, 1.5 ms at most: the choke finishes what it stops, and the
+            // hit plays whole from silence. Struck at once, it either stepped when the fade ended (to 0.6.5) or, softer
+            // than the tail it landed on, left the choked hit ringing at full level (0.6.6). The latest hit waits.
+            waiting = { true, key, pitch, v };
+            return;
+        }
+        hit (pitch, key, v);
+    }
+
+    // The hit itself (strike(): whether and when).
+    void hit (float pitch, bool key, float v)
+    {
         ++played;
         heldPitch = pitch;
         heldKey = key, heldQuantize = key ? 0.0f : knob[ParamId::quantize];
@@ -670,17 +681,31 @@ private:
     }
 
     // A choke or All Sound Off: the hit sounding fades out (the output, straight down to zero over chokeSeconds: a
-    // sample's share of it, at the host's rate), its envelopes are cleared once it is out, and the Ratchet hits still
-    // to come in this step do not play. The sequence's place and Run are untouched: the next step plays as ever. A hit
-    // after it on the same frame plays: it is no softer second hit of that frame.
+    // sample's share of it, at the host's rate), its envelopes and what the decimator holds of it are cleared once it
+    // is out, and the Ratchet hits still to come in this step do not play. The sequence's place and Run are untouched:
+    // the next step plays as ever. A hit after it on the same frame plays, as soon as the fade is out: it is no softer
+    // second hit of that frame. Nothing sounding (the VCA closed and the decimator empty), it is done at once. Inside a
+    // fade, the fade goes on from where it is, and a hit waiting for it is stopped before it sounds.
     void stop()
     {
-        if (fadeStep == 0.0f) // inside a fade (or one a hit turned back up), it goes down from where it is
-            fadeGain = 1.0f;
-        fadeStep = chokeStep;
-        chokedSinceHit = true;
         ratchetsLeft = 0;
         firedAt = ~(uint64_t) 0;
+        waiting.due = false;
+        if (vcaEg.idle() && decimator.silent())
+            endFade();
+        else
+            fadeStep = chokeStep;
+    }
+
+    // A choke's fade is out (or there was nothing to fade): the hit it stopped is gone, as a hit that never was, and
+    // the decimator keeps nothing of it to play after the fade at full gain. A hit that waited for it plays now.
+    void endFade()
+    {
+        fadeGain = 1.0f, fadeStep = 0.0f;
+        vcoEg = vcfEg = vcaEg = Envelope {};
+        decimator.clear();
+        if (waiting.due)
+            waiting.due = false, hit (waiting.pitch, waiting.key, waiting.level);
     }
 
     // A decay's multiplier a sample: -60 dB over its time. An attack's charge a sample: at the peak in `seconds`
@@ -745,7 +770,6 @@ private:
                 for (int k = 0; k < smoothed; ++k)
                     smooth[k] = target[k];
                 moving = false;
-                fadeGain = 1.0f, fadeStep = 0.0f; // a choke's fade over silence is over at once (the next hit is whole)
                 const uint32_t n = frames - i;
                 std::memset (left + i, 0, sizeof (float) * n);
                 if (right)
@@ -791,14 +815,8 @@ private:
             {
                 y *= fadeGain;
                 fadeGain -= fadeStep;
-                if (fadeGain <= 0.0f) // out: the envelopes cleared, as a hit that never was
-                {
-                    fadeGain = 1.0f, fadeStep = 0.0f;
-                    if (chokedSinceHit)
-                        vcoEg = vcfEg = vcaEg = Envelope {};
-                }
-                else if (fadeGain >= 1.0f) // turned back up by a hit: whole again
-                    fadeGain = 1.0f, fadeStep = 0.0f;
+                if (fadeGain <= 0.0f || (vcaEg.idle() && decimator.silent())) // out, or died away by itself inside it
+                    endFade();
             }
             left[i] = y;
             if (right)
@@ -846,7 +864,12 @@ private:
     float inner = 96000.0f, invInner = 1.0f / 96000.0f;
     float chokeStep = 1.0f / 72.0f;   // a choke's fade: the share of the output it takes off a sample (prepare())
     float fadeGain = 1.0f, fadeStep = 0.0f; // a choke's fade, while it runs (0: none)
-    bool chokedSinceHit = false;      // the hit sounding was choked and none has struck since
+    struct Waiting
+    {
+        bool due = false; // a hit struck inside a choke's fade, to play at its end (strike())
+        bool key = false;
+        float pitch = 0.0f, level = 0.0f;
+    } waiting;
     float knob[ParamId::count] {};
     float target[smoothed] {}, smooth[smoothed] {};
     float heldPitch = 0.0f, velocityLonger = 1.0f, stepLevel = 0.0f;
