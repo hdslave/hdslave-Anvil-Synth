@@ -241,7 +241,7 @@ page.
   back holds the steps already played until the song is past them again. Before 0.6.8 a step back of more than the
   call's own frames counted as a jump: with the calls in parts, at slow tempos or run twice a block, a step could play
   twice or be lost (at 40 BPM with the place up to 0.002 of a quarter off, 57 of 192 steps of 1/32 played twice).
-  A move of a 64th note or more is a jump, as before.
+  A move of more than a 64th note is a jump, as before (exactly a 64th, as hdslaveOS has it, is not).
 - Clock Div changed while playing: the steps count on the new grid from there; one due on that frame plays.
 - Run off: the host plays but the sequence holds its step and stays silent; Advance and Trigger work as on the panel.
   Run on again plays the step it is on at once and goes on from there; switched on on a step's own frame (with Play,

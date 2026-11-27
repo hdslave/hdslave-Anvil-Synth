@@ -920,6 +920,43 @@ void testPositionJitter()
     }
 }
 
+// The edges of a jump. Steps of 1/64 at 127 BPM (44.1 kHz), the song from beat 0 in hdslaveOS's blocks of 128.
+void testJumpEdges()
+{
+    const double rate = 44100.0, bpm = 127.0, perFrame = bpm / 60.0 / rate;
+    const bool debug = std::getenv ("ANVIL_DEBUG") != nullptr;
+    auto clicks = [&] (Instance& a, std::vector<std::pair<std::string, double>> more = {}) {
+        a.setup (evenClicks (a));
+        more.push_back ({ "Clock Div", a.valueOf ("Clock Div", "1/64") });
+        a.setup (more);
+    };
+    // A place told exactly a 64th note behind where the last block's frames led is no jump, as hdslaveOS has it (a move
+    // of more than a 64th is one): the step played is held, whatever the block before was told. Before, the CLAP
+    // rounding of the two places decided, so the same move was a jump after one block and not after another.
+    {
+        const uint64_t blocks = (uint64_t) (2.0 / perFrame / 128.0), at = (uint64_t) (1.02 / perFrame / 128.0) * 128;
+        std::vector<size_t> counts;
+        for (double off : { 0.001, -0.001, 0.0013, -0.0007, 0.0002, -0.0019, 0.0, 0.0017 })
+        {
+            Instance a (rate);
+            clicks (a);
+            auto place = [&] (uint64_t f) {
+                const double before = (double) (at - 128) * perFrame + off; // the block before, told `off` off its line
+                if (f < at - 128)
+                    return (double) f * perFrame;
+                if (f < at)
+                    return before;
+                return before + (double) (f - at + 128) * perFrame - 1.0 / 16.0;
+            };
+            counts.push_back (onsets (playCalls (a, hostCalls (blocks, bpm, rate, place), bpm)).size());
+            if (debug)
+                std::printf ("debug exactly a 64th back after %+.4f: %zu hits\n", off, counts.back());
+        }
+        CHECK (std::count (counts.begin(), counts.end(), counts[0]) == (long) counts.size());
+        CHECK (counts[0] == 31); // the steps to beat 1.94, the song held a 64th behind: none played twice
+    }
+}
+
 void testBlockSizes()
 {
     // The same transport and events heard in blocks of 128, 37 and 1 frames: the same output, to the bit.
@@ -2597,6 +2634,7 @@ int main (int argc, char** argv)
     testStopRestartJump();
     testLoopsAndClockChanges();
     testPositionJitter();
+    testJumpEdges();
     testBlockSizes();
     testButtonsAndNotes();
     testFirstPlay();
