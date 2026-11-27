@@ -434,7 +434,8 @@ public:
             return;
         }
         // A Play, or a place other than where the last block ended by more than a block and a 64th note (a jump, a
-        // loop going round): line up again. Less than that is drift (a tempo change inside the last block, the host's
+        // loop going round), or on by more than a block past two clocks (Swing 75 at 1/64; a locate on, a MIDI clock
+        // catching up): line up again. Less than that is drift (a tempo change inside the last block, the host's
         // place off its line), followed as it is: the steps already played are not played again (a step back holds
         // them until the song is past them again), one passed is played at once.
         const double moved = std::fabs (beats - position);
@@ -443,7 +444,8 @@ public:
             // calls with: the same Play heard in 1-, 37- or 4096-frame blocks plays the same steps. A jump keeps
             // the block window, which is how late a loop's wrap inside a block can be seen.
             relocate (beats, 128.0, false);
-        else if (moved > 0.5 * perFrame && moved >= window * perFrame && moved > jumpBeats + jumpSlack)
+        else if (moved > 0.5 * perFrame && moved >= window * perFrame
+                 && (moved > jumpBeats + jumpSlack || (beats > position && clockAtOrBefore (beats) > lastStep + 1)))
             relocate (beats, window, true);
         playing = true;
         position = beats;

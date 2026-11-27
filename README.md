@@ -235,13 +235,14 @@ page.
   late (2.7 ms at 128 frames).
 - A tempo change inside a block moves the host's place a few frames from where the steps counted: followed as it is,
   no step played twice, a step passed played at once.
-- So does a place a little off its line, either way, by less than a 64th note: hdslaveOS works the place out from its
+- So does a place a little off its line, either way, by up to a 64th note: hdslaveOS works the place out from its
   ticks, so a swung tick, a tick on a block's edge or MTC's trim puts it up to 0.0021 of a quarter off from block to
   block, and a plug-in two tracks play is run twice a block (its next block's first call told a block back). A step
   back holds the steps already played until the song is past them again. Before 0.6.8 a step back of more than the
   call's own frames counted as a jump: with the calls in parts, at slow tempos or run twice a block, a step could play
   twice or be lost (at 40 BPM with the place up to 0.002 of a quarter off, 57 of 192 steps of 1/32 played twice).
-  A move of more than a 64th note is a jump, as before (exactly a 64th, as hdslaveOS has it, is not).
+  A move of more than a 64th note is a jump, as before (exactly a 64th, as hdslaveOS has it, is not), and so is one on
+  past two clocks (Swing 75 at 1/64): the step the song landed on plays, not the two passed on one frame.
 - Clock Div changed while playing: the steps count on the new grid from there; one due on that frame plays.
 - Run off: the host plays but the sequence holds its step and stays silent; Advance and Trigger work as on the panel.
   Run on again plays the step it is on at once and goes on from there; switched on on a step's own frame (with Play,

@@ -955,6 +955,28 @@ void testJumpEdges()
         CHECK (std::count (counts.begin(), counts.end(), counts[0]) == (long) counts.size());
         CHECK (counts[0] == 31); // the steps to beat 1.94, the song held a 64th behind: none played twice
     }
+    // A move on by less than a 64th note that passes two clocks (Swing 75 at 1/64 puts a late clock 1/128 before the
+    // next one: a locate on, a MIDI clock catching up) is a jump, as it was: the step the song landed on plays at once,
+    // not the two passed on one frame (the louder of them). Here the song's place goes from just before clock 17 (a late
+    // one, loud) to 0.002 quarter past clock 18 (soft) at a block's start.
+    {
+        std::vector<std::pair<std::string, double>> swung { { "Swing", 0.75 } };
+        for (int s = 1; s <= 8; ++s)
+            swung.push_back ({ "Velocity " + std::to_string (s), s % 2 == 0 ? 1.0 : 0.25 }); // odd clocks loud
+        const double c15 = (14 + 1.5) * 0.0625, c16 = 1.0, c17 = (16 + 1.5) * 0.0625, c18 = 1.125;
+        const uint64_t at = (uint64_t) (c17 / perFrame / 128.0) * 128, blocks = at / 128 + 40;
+        const double landed = c18 + 0.002;
+        Instance a (rate);
+        clicks (a, swung);
+        const auto l = playCalls (a, hostCalls (blocks, bpm, rate, [&] (uint64_t f) {
+            return f < at ? (double) f * perFrame : landed + (double) (f - at) * perFrame; }), bpm);
+        const double loud = energy (l, (long) (c15 / perFrame), 600), soft = energy (l, (long) (c16 / perFrame), 600);
+        const double there = energy (l, (long) at, 600);
+        if (debug)
+            std::printf ("debug two clocks passed: loud %.4f soft %.4f, at the jump %.4f\n", loud, soft, there);
+        CHECK (loud > soft * 4.0);
+        CHECK (there > soft * 0.8 && there < soft * 1.25);
+    }
 }
 
 void testBlockSizes()
