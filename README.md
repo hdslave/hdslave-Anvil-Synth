@@ -17,7 +17,7 @@
 
 > **Desktop CLAP version (macOS & Windows):** A separate desktop CLAP build with all MPC screens on one interactive panel lives in [**`mac-clap/`**](mac-clap/) (`cd mac-clap && ./install-macos.sh`). The SP-16 build is [below](#freesp16).
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.7). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.8). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 The custom screen uses `melodee.screen/1` on Melodee 0.7 and hdslaveOS based on it. Open Edit on the plug-in track or select PANEL on Stage.
 
@@ -235,6 +235,13 @@ page.
   late (2.7 ms at 128 frames).
 - A tempo change inside a block moves the host's place a few frames from where the steps counted: followed as it is,
   no step played twice, a step passed played at once.
+- So does a place a little off its line, either way, by less than a 64th note: hdslaveOS works the place out from its
+  ticks, so a swung tick, a tick on a block's edge or MTC's trim puts it up to 0.0021 of a quarter off from block to
+  block, and a plug-in two tracks play is run twice a block (its next block's first call told a block back). A step
+  back holds the steps already played until the song is past them again. Before 0.6.8 a step back of more than the
+  call's own frames counted as a jump: with the calls in parts, at slow tempos or run twice a block, a step could play
+  twice or be lost (at 40 BPM with the place up to 0.002 of a quarter off, 57 of 192 steps of 1/32 played twice).
+  A move of a 64th note or more is a jump, as before.
 - Clock Div changed while playing: the steps count on the new grid from there; one due on that frame plays.
 - Run off: the host plays but the sequence holds its step and stays silent; Advance and Trigger work as on the panel.
   Run on again plays the step it is on at once and goes on from there; switched on on a step's own frame (with Play,
@@ -290,7 +297,9 @@ The tests load the plug-in through the CLAP API and check: description and ports
 default; state save and load; the presets as preset discovery lists them and preset-load loads them; step timing to the frame at 44.1, 48 and 96 kHz and two tempos; stop, restart, jumps,
 a host without a song position; a loop wrapping inside a block and told a block late (one hit on the downbeat, not
 two; a downbeat the loop's end left silent still played, in whole blocks and in Melodee's smaller parts), a tempo
-change inside a block, Clock Div changed on a downbeat, a button pressed through a flush and one stamped past its
+change inside a block, the place off its line (up to 0.002 of a quarter either way, also in parts; swing 60's ticks;
+run twice a block; at 127 and 40 BPM: each step once, near its place) and moved back under and over a 64th note,
+Clock Div changed on a downbeat, a button pressed through a flush and one stamped past its
 block; the same output whatever the block size (1, 37,
 128, 4096 frames); Trigger, Advance, Run and MIDI notes; Length (a cycle of 3, Advance wrapping in it) and Swing (66 and
 75 %, and a jump between a step's grid line and its late clock); Notes: Steps (notes 36 to 39 and 44, a softer note);
