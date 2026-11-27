@@ -313,6 +313,7 @@ public:
         tick = 0;
         playing = aligned = false;
         lastStep = -1;
+        reached = -1.0e300;
         stepIndex = 0;
         travel = 0;
         now = 0;
@@ -447,6 +448,8 @@ public:
         else if (moved > 0.5 * perFrame && moved >= window * perFrame
                  && (moved > jumpBeats + jumpSlack || (beats > position && clockAtOrBefore (beats) > lastStep + 1)))
             relocate (beats, window, true);
+        else if (beats < position)
+            reached = std::max (reached, position); // held: where the steps got to, for a Clock Div change meanwhile
         playing = true;
         position = beats;
     }
@@ -599,6 +602,7 @@ private:
         const int64_t b = clockAtOrBefore (beats);
         const double late = (beats - clockBeat (b)) / perFrame; // frames since the host's step b began
         position = beats;
+        reached = -1.0e300;
         regridWanted = false;
         // A jump whose step b began on the very frame a step played here: a loop gone round inside a block (the host
         // tells only at the next one, so the steps ran on past the loop's end; its end is its start). That step was
@@ -624,10 +628,11 @@ private:
     }
 
     // Clock Div changed: count steps on the new grid from here, without a burst of them. A step of the new grid due on
-    // this frame (in the last frame's time) still plays.
+    // this frame (in the last frame's time) still plays. Here is where the steps got to: while the place is held behind
+    // them, not the place.
     void regrid()
     {
-        lastStep = clockAtOrBefore (position - perFrame * (1.0 - clockSlack));
+        lastStep = clockAtOrBefore (std::max (position, reached) - perFrame * (1.0 - clockSlack));
         regridWanted = false;
     }
 
@@ -872,6 +877,7 @@ private:
     }
 
     double rate = 48000.0, perFrame = 0.0, position = 0.0;
+    double reached = -1.0e300; // the furthest place the steps got to while the place stepped back (a hold); none
     float inner = 96000.0f, invInner = 1.0f / 96000.0f;
     float chokeStep = 1.0f / 72.0f;   // a choke's fade: the share of the output it takes off a sample (prepare())
     float fadeGain = 1.0f, fadeStep = 0.0f; // a choke's fade, while it runs (0: none)

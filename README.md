@@ -243,7 +243,8 @@ page.
   twice or be lost (at 40 BPM with the place up to 0.002 of a quarter off, 57 of 192 steps of 1/32 played twice).
   A move of more than a 64th note is a jump, as before (exactly a 64th, as hdslaveOS has it, is not), and so is one on
   past two clocks (Swing 75 at 1/64): the step the song landed on plays, not the two passed on one frame.
-- Clock Div changed while playing: the steps count on the new grid from there; one due on that frame plays.
+- Clock Div changed while playing: the steps count on the new grid from there; one due on that frame plays. While the
+  place is held behind the steps played (above), they count from where the steps got to, so none plays again.
 - Run off: the host plays but the sequence holds its step and stays silent; Advance and Trigger work as on the panel.
   Run on again plays the step it is on at once and goes on from there; switched on on a step's own frame (with Play,
   or on a later step), that step plays, once.
