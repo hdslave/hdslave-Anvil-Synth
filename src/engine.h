@@ -325,7 +325,7 @@ public:
         // As a fresh instance's: no hit has fired (one on frame 0 next is no second hit of a frame), no step is
         // held, and the last block's size is forgotten.
         firedAt = ~(uint64_t) 0, firedLevel = 0.0f;
-        heldPitch = 0.0f, heldKey = false, heldQuantize = knob[ParamId::quantize];
+        heldPitch = 0.0f, heldOctaves = 0, heldKey = false, heldQuantize = knob[ParamId::quantize];
         stepLevel = 0.0f, velocityLonger = 1.0f;
         lastBlock = 0;
         // A Run "press" made before this (the defaults switching Run on as the plug-in is made, a flush while
@@ -371,20 +371,25 @@ public:
         {
             stepIndex = following (stepIndex);
             heldPitch = knob[ParamId::pitch1 + stepIndex]; // the pitch CV follows the step, sounding or not
-            heldKey = false, heldQuantize = knob[ParamId::quantize];
+            heldOctaves = 0, heldKey = false, heldQuantize = knob[ParamId::quantize];
             dirty = true;
         }
         else
             fire();
     }
 
-    // A MIDI note (a pad). Run on (the sequencer's own switch, whether or not the host plays), or Notes: Steps: the
-    // step the key names plays, 36 to 43 steps 1 to 8, and so on up and down the keyboard (a pad previews its step).
-    // Run off with Notes: Pitch: the voice plays the key, as a step of its own (chromatic).
+    // A MIDI note (a pad). Run on (the sequencer's own switch, whether or not the host plays), or Notes: Steps: a step
+    // pad, read as pad slot and bank (padOf: 16 keys a bank from 36, banks -2 to +3): the slot's step plays (pads 1 to
+    // 8 steps 1 to 8, pads 9 to 16 again), an octave up a bank (a pad previews its step). Run off with Notes: Pitch: the
+    // voice plays the key, as a step of its own (chromatic, every key its own pitch, as before 0.7).
     void note (int key, float velocity)
     {
         if (knob[ParamId::run] >= 0.5f || knob[ParamId::noteMode] >= 0.5f)
-            playStep (((key - firstStepNote) % 8 + 8) % 8, velocity, key);
+        {
+            const PadKey pad = padOf (key);
+            const int s = pad.slot & 7;
+            strike (knob[ParamId::pitch1 + s], false, knob[ParamId::velocity1 + s] * velocity, key, pad.bank);
+        }
         else
             playKey (key, velocity);
     }
@@ -657,8 +662,9 @@ private:
     void fireStep (int s, float v, int from = -1) { strike (knob[ParamId::pitch1 + s], false, v, from); }
 
     // A hit at `pitch` (a step's Pitch knob, -1..1 for +-5 octaves; `key`: a played key's, which Quantize leaves as it
-    // is) and level `v`; `from`: the MIDI key that struck it (-1: none), for a choke.
-    void strike (float pitch, bool key, float v, int from)
+    // is) and level `v`; `from`: the MIDI key that struck it (-1: none), for a choke; `octaves`: a step pad's bank, the
+    // octaves it moves the step (after Quantize).
+    void strike (float pitch, bool key, float v, int from, int octaves = 0)
     {
         // Two steps on one frame (two pads at once, in whatever order the host sends them): the louder plays, whole (its
         // pitch, cutoff and decays as well as its level); on a tie the later.
@@ -671,17 +677,17 @@ private:
             // A hit inside a choke's fade waits for its end, 1.5 ms at most: the choke finishes what it stops, and the
             // hit plays whole from silence. Struck at once, it either stepped when the fade ended (to 0.6.5) or, softer
             // than the tail it landed on, left the choked hit ringing at full level (0.6.6). The latest hit waits.
-            waiting = { true, key, pitch, v };
+            waiting = { true, key, pitch, v, octaves };
             return;
         }
-        hit (pitch, key, v);
+        hit (pitch, key, v, octaves);
     }
 
     // The hit itself (strike(): whether and when).
-    void hit (float pitch, bool key, float v)
+    void hit (float pitch, bool key, float v, int octaves)
     {
         ++played;
-        heldPitch = pitch;
+        heldPitch = pitch, heldOctaves = octaves;
         heldKey = key, heldQuantize = key ? 0.0f : knob[ParamId::quantize];
         stepLevel = v;
         velocityLonger = 0.9f + 0.2f * v; // before retarget(): it sets the three decays with it
@@ -721,7 +727,7 @@ private:
         if (! decimator.silent()) // one already silent keeps its count, so the knobs are still taken at once
             decimator.clear();
         if (waiting.due)
-            waiting.due = false, hit (waiting.pitch, waiting.key, waiting.level);
+            waiting.due = false, hit (waiting.pitch, waiting.key, waiting.level, waiting.octaves);
     }
 
     // A decay's multiplier a sample: -60 dB over its time. An attack's charge a sample: at the peak in `seconds`
@@ -739,7 +745,9 @@ private:
         // The held step's pitch in octaves, as Quantize plays it (Off: the knob as it is). A played key's pitch is held
         // with Quantize Off (heldQuantize: the knob's, or Off for a key).
         const int quantize = (int) heldQuantize;
-        const float seq = quantize == 0 ? heldPitch * seqPitchOctaves : quantizedSemitones (heldPitch, quantize) * (1.0f / 12.0f);
+        float seq = quantize == 0 ? heldPitch * seqPitchOctaves : quantizedSemitones (heldPitch, quantize) * (1.0f / 12.0f);
+        if (heldOctaves != 0) // a step pad of another bank: the step an octave a bank up or down, within a step's reach
+            seq = clampf (seq + (float) heldOctaves, -seqPitchOctaves, seqPitchOctaves);
         target[pitch1] = std::log2 (vcoLowHz) + knob[ParamId::vco1Freq] * vcoOctaves + (mod == 0 ? seq : 0.0f);
         target[pitch2] = std::log2 (vcoLowHz) + knob[ParamId::vco2Freq] * vcoOctaves + (mod != 1 ? seq : 0.0f);
         target[eg1] = knob[ParamId::vco1EgAmt] * vcoEgOctaves;
@@ -886,6 +894,7 @@ private:
         bool due = false; // a hit struck inside a choke's fade, to play at its end (strike())
         bool key = false;
         float pitch = 0.0f, level = 0.0f;
+        int octaves = 0;
     } waiting;
     float knob[ParamId::count] {};
     float target[smoothed] {}, smooth[smoothed] {};
@@ -895,6 +904,7 @@ private:
     bool playing = false, aligned = false, regridWanted = false, dirty = true, moving = false, runPressed = false;
     bool heldKey = false; // the held pitch is a played key's (Notes: Pitch), not a step's: Quantize leaves it
     float heldQuantize = 0.0f; // the Quantize the held pitch plays by: the knob's, or Off for a played key
+    int heldOctaves = 0;       // a step pad's bank: the octaves the held step moves, after Quantize (0: none)
     int64_t lastStep = -1, travel = 0;
     int stepIndex = 0;
     uint32_t played = 0; // hits played (for the screen)

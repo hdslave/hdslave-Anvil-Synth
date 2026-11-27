@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#include <tuple>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -1879,7 +1880,7 @@ void testScreen (const std::string& folder)
     frame.shift = 0;
 }
 
-// 0.6: the pads. With Run on (the sequencer's own switch, the transport playing or not) every MIDI note plays the step
+// 0.6: the pads (0.7: step pads read as pad slot and bank, padOf). With Run on (the switch, the transport playing or not) a note plays the step
 // its key names (36-43 steps 1-8, 44-51 steps 1-8 again ...) as the sequencer plays that step, without moving the
 // sequence; with Run off, Notes: Pitch (the default) plays the voice at the key's pitch, Notes: Steps the steps.
 namespace
@@ -2081,7 +2082,10 @@ void testPads()
     }
     // Run off, Notes: Pitch (the default): chromatic. Pad 1's key (36) plays the Freq knobs as they are; each key a
     // semitone, not snapped by Quantize (Major here: 37 would snap to 36 or 38).
-    for (auto [key, hz] : { std::pair<int, double> { 36, 144.0 }, { 48, 288.0 }, { 60, 576.0 }, { 37, 152.6 }, { 72, 1152.0 }, { 24, 72.0 } })
+    // The pad banks change none of it (0.7): bank B's pad 1 (key 52) plays 16 semitones above pad 1, C's (68) 32, D's
+    // (84) 48, every key its own pitch as before 0.7.
+    for (auto [key, hz] : { std::pair<int, double> { 36, 144.0 }, { 48, 288.0 }, { 60, 576.0 }, { 37, 152.6 }, { 72, 1152.0 }, { 24, 72.0 },
+                            { 52, 144.0 * std::exp2 (16.0 / 12.0) }, { 68, 144.0 * std::exp2 (32.0 / 12.0) }, { 84, 144.0 * std::exp2 (4.0) } })
     {
         Instance a;
         a.setup (padPatch (a, { { "Run", 0.0 }, { "Quantize", a.valueOf ( "Quantize", "Major") } }));
@@ -2101,7 +2105,7 @@ void testPads()
     }
     // ...the key as a step of its own: the same, to the bit, as Trigger on a step whose Pitch is the key's distance
     // from pad 1's key (36) and whose Velocity is the note's (Quantize Off there), through every route.
-    for (auto [key, velocity] : { std::pair<int, double> { 72, 1.0 }, { 48, 0.5 }, { 37, 0.8 } })
+    for (auto [key, velocity] : { std::pair<int, double> { 72, 1.0 }, { 48, 0.5 }, { 37, 0.8 }, { 52, 0.9 }, { 84, 1.0 } })
     {
         Instance pad, panel;
         const Values routes { { "Run", 0.0 }, { "Seq Pitch Mod", pad.valueOf ("Seq Pitch Mod", "VCO 2") }, { "VCO 1 Level", 0.5 } };
@@ -2149,6 +2153,62 @@ void testPads()
             const int wins = tie ? (highFirst ? 48 : 72) : 72;
             CHECK (got == run (alone, 24000, false, { { 1280, noteOn (wins, wins == 72 ? 1.0 : soft) } }));
         }
+    // 0.7, the pad banks (hdslaveOS's - / + on a track with Anvil's drum map move them, 16 keys a bank): Run on, a pad
+    // of any bank plays its bank-A pad's step, an octave up a bank (B 52-67, C 68-83, D 84-99: +1 to +3, keys above D
+    // as D; below A an octave down a bank, at most two), after Quantize, never another step and never silence. Keys 52,
+    // 68 and 84 play step 1 as key 36 does; key 60 (bank B's pad 9) step 1 too; key 20 (the bank below A's pad 1) step 1
+    // an octave down.
+    for (bool quantized : { false, true })
+        for (auto [key, step, octaves] : { std::tuple<int, int, int> { 52, 0, 1 }, { 68, 0, 2 }, { 84, 0, 3 }, { 60, 0, 1 }, { 20, 0, -1 },
+                                           { 54, 2, 1 }, { 67, 7, 1 }, { 100, 0, 3 }, { 92, 0, 3 }, { 4, 0, -2 } })
+        {
+            Instance a, b;
+            const Values q { { "Quantize", quantized ? a.valueOf ("Quantize", "Octaves") : 0.0 } };
+            a.setup (padPatch (a, q));
+            b.setup (padPatch (b, q));
+            const auto banked = run (a, 24000, false, { { 0, noteOn (key, 1.0) } });
+            const auto bankA = run (b, 24000, false, { { 0, noteOn (36 + step, 1.0) } });
+            const double want = (quantized ? 144.0 * std::exp2 (std::round (padPitch[step] * 5.0)) : padHz (step)) * std::exp2 (octaves);
+            if (std::getenv ("ANVIL_DEBUG")) std::printf ("debug bank key %d: %.1f Hz (want %.1f)\n", key, hzAt (banked, 2000), want);
+            CHECK (loudest (banked) > 0.05f && near (hzAt (banked, 2000), want));
+            CHECK (near (hzAt (bankA, 2000) * std::exp2 (octaves), hzAt (banked, 2000)));
+            // the same hit otherwise: the same velocity's level
+            CHECK (std::fabs (loudest (banked) - loudest (bankA)) < 0.02f * loudest (bankA));
+        }
+    // ...to the bit: a key past the banks is the last bank's pad (100 as D's 84, 127, slot 11 of bank 5, as 95; 3 as
+    // 19); and bank D's pads with Notes: Steps and Run off the same as with Run on.
+    for (auto [key, as] : { std::pair<int, int> { 100, 84 }, { 127, 95 }, { 3, 19 } })
+    {
+        Instance a, b;
+        a.setup (padPatch (a, padRoutes (a)));
+        b.setup (padPatch (b, padRoutes (b)));
+        const auto got = run (a, 24000, false, { { 1280, noteOn (key, 1.0) } });
+        CHECK (loudest (got) > 0.05f && got == run (b, 24000, false, { { 1280, noteOn (as, 1.0) } }));
+    }
+    {
+        Instance a, b;
+        a.setup (padPatch (a, padRoutes (a)));
+        b.setup (padPatch (b, padRoutes (b) + Values { { "Run", 0.0 }, { "Notes", 1.0 } }));
+        CHECK (run (a, 24000, false, { { 1280, noteOn (90, 0.8) } }) == run (b, 24000, false, { { 1280, noteOn (90, 0.8) } }));
+    }
+    // ...the bank's octave ends with the hit: Trigger after a bank-B pad plays step 1 at its own pitch, and Advance moves
+    // the held pitch to step 2's own.
+    {
+        Instance a;
+        a.setup (padPatch (a));
+        const auto l = run (a, 72000, false, { { 0, noteOn (52, 1.0) }, { 24000, value ("Trigger", 1.0) }, { 48000, noteOn (68, 1.0) },
+                                                { 50000, value ("Advance", 1.0) } });
+        CHECK (near (hzAt (l, 2000), padHz (0) * 2.0) && near (hzAt (l, 26000), padHz (0)) && near (hzAt (l, 52000), padHz (1)));
+    }
+    // Pad Kit (its drums on the pads with Run off, Notes: Steps): bank B's pad 6 is the same drum, an octave up.
+    {
+        Instance kit, kitA;
+        CHECK (kit.loadPreset ("pad-kit") && kitA.loadPreset ("pad-kit"));
+        kit.setup ({ { "Run", 0.0 } });
+        kitA.setup ({ { "Run", 0.0 } });
+        CHECK (loudest (run (kit, 24000, false, { { 1280, noteOn (57, 1.0) } })) > 0.05f);
+        CHECK (run (kit, 24000, false, { { 1280, noteOn (57, 1.0) } }) != run (kitA, 24000, false, { { 1280, noteOn (41, 1.0) } }));
+    }
     // The page's Push plays the step picked, whatever Run and Notes are (it is no note).
     {
         Instance a, panel;
@@ -2207,6 +2267,47 @@ bool sameTo (const std::vector<float>& a, const std::vector<float>& b, size_t n)
     return a.size() >= n && b.size() >= n && std::equal (a.begin(), a.begin() + (long) n, b.begin());
 }
 } // namespace
+
+// 0.7: the drum map hdslaveOS reads from the library (as its plugin/drum_map.h does: the object holding
+// "pad_layout":"drums", each level a name and a note): 16 pads, notes 36 to 51, one each, named by the step they play.
+void testDrumMap (const char* path)
+{
+    std::FILE* f = std::fopen (path, "rb");
+    CHECK (f != nullptr);
+    if (f == nullptr) return;
+    std::string bytes;
+    char chunk[65536];
+    for (size_t n; (n = std::fread (chunk, 1, sizeof (chunk), f)) > 0;)
+        bytes.append (chunk, n);
+    std::fclose (f);
+    const size_t at = bytes.find ("{\"pad_layout\":\"drums\"");
+    CHECK (at != std::string::npos && bytes.find ("\"pad_layout\"", at + 2) == std::string::npos);
+    if (at == std::string::npos) return;
+    const std::string json = bytes.substr (at, bytes.find ('\0', at) - at);
+    CHECK (json.find ("\"name\":\"hdslave Anvil\"") != std::string::npos);
+    // walk the levels: {"pN":{"name":"...","note":K}, ...}
+    const size_t levels = json.find ("\"levels\":{");
+    CHECK (levels != std::string::npos);
+    if (levels == std::string::npos) return;
+    int count = 0, seen[128] = {};
+    std::vector<std::string> names;
+    for (size_t p = json.find ("\"name\":\"", levels); p != std::string::npos; p = json.find ("\"name\":\"", p + 1))
+    {
+        const size_t from = p + 8, to = json.find ('"', from);
+        const size_t note = json.find ("\"note\":", to);
+        CHECK (to != std::string::npos && note != std::string::npos);
+        if (to == std::string::npos || note == std::string::npos) return;
+        const int key = std::atoi (json.c_str() + note + 7);
+        names.push_back (json.substr (from, to - from));
+        ++count;
+        if (key >= 0 && key < 128) ++seen[key];
+    }
+    CHECK (count == 16);
+    for (int k = 36; k <= 51; ++k)
+        CHECK (seen[k] == 1);
+    CHECK (names.size() == 16 && names[0] == "Step 1" && names[7] == "Step 8" && names[8] == "Step 1" && names[15] == "Step 8");
+    CHECK (json.size() > 2 && json.compare (json.size() - 3, 3, "}}}") == 0);
+}
 
 void testChokes()
 {
@@ -2694,6 +2795,7 @@ int main (int argc, char** argv)
     testScreen (argv[2]);
     testSixteenScreen (argv[2]);
     testPads();
+    testDrumMap (argv[1]);
     testChokes();
     testRobustness();
     testExtremes();

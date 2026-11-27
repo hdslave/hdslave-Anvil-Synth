@@ -31,6 +31,27 @@ const clap_plugin_descriptor descriptor {
     features,
 };
 
+// The pads as Melodee reads them from a plug-in's library (a drum map): with this, a plug-in track on Anvil plays its
+// pads as notes 36-51 (pads A01-A16) whatever the track's octave, key or scale, names them on the Keys page, and its
+// - / + move the pad bank (B 52-67, C 68-83, D 84-99): step pads an octave up a bank (padOf, params.h), keys played
+// chromatically (Run off, Notes: Pitch) at their own pitch. Pads 9 to 16 play steps 1 to 8 again. Kept in the binary
+// by padsJson() below.
+[[gnu::used]] const char padMapJson[] =
+    "{\"pad_layout\":\"drums\",\"name\":\"hdslave Anvil\",\"levels\":{"
+    "\"p1\":{\"name\":\"Step 1\",\"note\":36},\"p2\":{\"name\":\"Step 2\",\"note\":37},"
+    "\"p3\":{\"name\":\"Step 3\",\"note\":38},\"p4\":{\"name\":\"Step 4\",\"note\":39},"
+    "\"p5\":{\"name\":\"Step 5\",\"note\":40},\"p6\":{\"name\":\"Step 6\",\"note\":41},"
+    "\"p7\":{\"name\":\"Step 7\",\"note\":42},\"p8\":{\"name\":\"Step 8\",\"note\":43},"
+    "\"p9\":{\"name\":\"Step 1\",\"note\":44},\"p10\":{\"name\":\"Step 2\",\"note\":45},"
+    "\"p11\":{\"name\":\"Step 3\",\"note\":46},\"p12\":{\"name\":\"Step 4\",\"note\":47},"
+    "\"p13\":{\"name\":\"Step 5\",\"note\":48},\"p14\":{\"name\":\"Step 6\",\"note\":49},"
+    "\"p15\":{\"name\":\"Step 7\",\"note\":50},\"p16\":{\"name\":\"Step 8\",\"note\":51}}}";
+const char* padsJson()
+{
+    const char* volatile json = padMapJson;
+    return json;
+}
+
 struct Plugin
 {
     clap_plugin clap {};
@@ -441,6 +462,7 @@ const clap_plugin_note_ports noteExtension { noteCount, noteGet };
 bool pluginInit (const clap_plugin* plugin)
 {
     auto& p = of (plugin);
+    (void) padsJson();
     for (uint32_t i = 0; i < paramCount; ++i)
     {
         p.values[i].store (paramTable[i].def, std::memory_order_relaxed);

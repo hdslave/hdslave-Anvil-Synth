@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.6.8"
+#define ANVIL_VERSION "0.7.0"
 #endif
 
 namespace anvil
@@ -92,13 +92,28 @@ inline const char* const runChoices[] = { "Stop", "Run" };
 // sequence was on); typed text "Trigger" still reads as it.
 inline const char* const noteModeChoices[] = { "Pitch", "Steps" };
 inline const char* const directionChoices[] = { "Forward", "Backward", "Ping-Pong", "Random" };
-// Run on (or Notes: Steps): MIDI notes 36 to 43 (pads 1 to 8 of a plug-in track at hdslaveOS's defaults) play steps 1
-// to 8; every 8 notes up and down, again (pads 9 to 16, notes 44 to 51, are steps 1 to 8 too).
-constexpr int firstStepNote = 36;
+// The pads. Anvil's drum map (anvil.cpp) has hdslaveOS play a plug-in track's pads A01 to A16 as notes 36 to 51 whatever
+// the track's octave, key or scale; its - / + then move the pad bank, 16 notes a bank (B 52-67, C 68-83, D 84-99; below
+// A, 20-35 and 4-19). Where the pads are steps (Run on, or Notes: Steps), every bank plays the same 16 step pads, an
+// octave up a bank: banks A-D 0 to +3 octaves, at most two down below A.
+constexpr int firstStepNote = 36, padSlots = 16, lowestPadBank = -2, highestPadBank = 3;
+struct PadKey { int slot; int bank; }; // slot 0-15 (pad A01-A16's), bank -2..3 (octaves)
+constexpr PadKey padOf (int key)
+{
+    const int from = key - firstStepNote;
+    const int bank = from >= 0 ? from / padSlots : -((-from + padSlots - 1) / padSlots);
+    return { from - bank * padSlots, bank < lowestPadBank ? lowestPadBank : bank > highestPadBank ? highestPadBank : bank };
+}
+// Run on (or Notes: Steps): pads 1 to 8 play steps 1 to 8, and pads 9 to 16 steps 1 to 8 again; a pad of another bank
+// plays its bank-A pad's step an octave up or down a bank.
 // Run off with Notes: Pitch: the key that plays the Freq knobs as they are set (a step at Pitch 0). Note 36 is pad 1
 // at hdslaveOS's defaults, so pads 1 to 16 play the knobs' pitch and the 15 semitones above it; each key a semitone,
-// lower keys lower. Before 0.6.1 it was middle C (60), which put the default pads two octaves below the knobs.
+// lower keys lower (another bank's pads too: key 52 is 16 semitones up, as before 0.7). Before 0.6.1 it was middle C
+// (60), which put the default pads two octaves below the knobs.
 constexpr int keyAtKnobs = 36;
+static_assert (padOf (36).slot == 0 && padOf (36).bank == 0 && padOf (51).slot == 15 && padOf (52).bank == 1
+               && padOf (84).bank == 3 && padOf (99).slot == 15 && padOf (99).bank == 3 && padOf (100).bank == 3
+               && padOf (35).slot == 15 && padOf (35).bank == -1 && padOf (127).bank == 3 && padOf (0).bank == -2, "padOf");
 // A choke, or MIDI's All Sound Off (CC 120 at 0): the output fades out over this long (seconds), linearly, so the hit
 // stops without a click; its envelopes are then cleared. The fade is on the output, not in the envelopes' own loop, so
 // a block that chokes nothing costs the same as before.

@@ -17,7 +17,7 @@
 
 > **Desktop CLAP version (macOS & Windows):** A separate desktop CLAP build with all MPC screens on one interactive panel lives in [**`mac-clap/`**](mac-clap/) (`cd mac-clap && ./install-macos.sh`). The SP-16 build is [below](#freesp16).
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.6.8). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.7.0). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 The custom screen uses `melodee.screen/1` on Melodee 0.7 and hdslaveOS based on it. Open Edit on the plug-in track or select PANEL on Stage.
 
@@ -41,6 +41,7 @@ On the MPC it draws its own page on the screen (see [The screen](#the-screen)). 
 steps; with Run off they play notes (see [The pads](#the-pads-midi-notes)).
 
 Not yet run on the MPC itself: tested in hdslaveOS's own CLAP host code (`clap_check`) and this repository's tests.
+The drum map and the pad banks (0.7.0) have not been tried on the MPC either.
 
 0.6.2 hardens what a host can send — a missing or non-finite tempo reads as 120 and a sample rate that is no rate
 as 48 kHz, a Play landing mid-step the same at every block size, a state or preset settling at once instead of
@@ -137,19 +138,38 @@ The panel's names, in the order Melodee's Edit page lists them (three to a page)
 
 ### The pads (MIDI notes)
 
-On a plug-in track at hdslaveOS's defaults (octave 2, key C, Chromatic) pads 1–16 send notes 36–51.
+Anvil carries a drum map in the plug-in (the JSON hdslaveOS reads from a plug-in's library), so hdslaveOS plays a
+plug-in track on it as Drums: pads A01–A16 send notes 36–51 whatever the track's octave, key or scale, and the Keys
+page names them **Step 1** … **Step 8**, then **Step 1** … **Step 8** again for pads 9–16. hdslaveOS's − / + then
+move the pad bank instead of the octave: bank B sends 52–67, C 68–83, D 84–99.
+
+Where the pads are steps (Run on, or Notes: Steps), Anvil reads every key as a pad and a bank: pad slot (key − 36)
+mod 16 and bank ⌊(key − 36) / 16⌋, held to −2 … +3 (banks A–D are 0 to +3 octaves, keys above 99 play as bank D, and
+below A, 20–35 and 4–19, are banks −1 and −2). **Every bank plays the same 16 step pads, an octave up a bank.** − / +
+never re-map the step pads and never silence them. Where the keys play notes (Run off, Notes: Pitch), every key plays
+its own pitch, as before 0.7.0.
 
 - **Run on (the default): pads 1–16 play steps.** Pads 1–8 (notes 36–43) are steps 1–8, pads 9–16 (44–51) steps 1–8
-  again, and so on every 8 notes up and down the keyboard. A pad plays its step at once, as the sequencer plays that
+  again. A pad of another bank plays its bank-A pad's step an octave up a bank (bank B's pad 1, note 52, is step 1 an
+  octave up, bank D's three octaves up; after Quantize, so it stays in the scale), or down below A, within a step's ±5
+  octaves. A pad plays its
+  step at once, as the sequencer plays that
   step: its Pitch (as Quantize plays it), its Velocity times the pad's, through every route the step takes. It plays
   even where the sequence would leave the step silent (Chance), and with the transport stopped or playing. The
-  sequence does not move: the next step is the one it would have been. The pad's pitch holds until the sequence's next
-  step (or Trigger, or Advance) replaces it.
-- **Run off: the pads play notes** (Notes: Pitch, the default). A key plays the voice as a step of its own: its Pitch
-  is the key's distance from pad 1's note (36, which plays the Freq knobs as they are; pads 1–16 run from there to 15
-  semitones above it, and keys below 36 lower), its velocity the note's, through the same routes (Seq Pitch Mod,
-  Pitch > Cutoff, Vel > Cutoff, VCF EG > VCO 2), not snapped by Quantize. The pitch stops at a step's ±5 octaves (key
-  96; higher keys play as 96). The sequence does not move. With Notes: Steps the pads play the steps, as with Run on.
+  sequence does not move: the next step is the one it would have been. The pad's pitch (and its bank's octave) holds
+  until the sequence's next step (or Trigger, or Advance) replaces it.
+- **Run off: the pads play notes** (Notes: Pitch, the default), chromatically, exactly as before 0.7.0. A key plays
+  the voice as a step of its own: its Pitch is the key's distance from pad 1's note (36, which plays the Freq knobs as
+  they are; pads 1–16 run from there to 15 semitones above it, and keys below 36 lower), its velocity the note's,
+  through the same routes (Seq Pitch Mod, Pitch > Cutoff, Vel > Cutoff, VCF EG > VCO 2), not snapped by Quantize. The
+  pitch stops at a step's ±5 octaves (key 96; higher keys play as 96). The bank does not re-map it: bank B's pad 1
+  (note 52) plays 16 semitones above pad 1, as an external keyboard's or a saved project's note 52 always did. The
+  sequence does not move. With Notes: Steps the pads play the steps, as with Run on (Pad Kit's drums: another bank
+  plays the same drum an octave up or down).
+- **What 0.7.0 replaced.** To 0.6.8 a key with Run on played step (key − 36) mod 8, so a key outside 36–51 picked
+  a step by that count: after hdslaveOS's octave − / + (12 keys), every pad landed four steps on (hdslaveOS issue 1).
+  Step pads now follow the bank rule above. Chromatic play (Run off, Notes: Pitch) is unchanged, to the bit. Anvil
+  has no other way to transpose the sequence from the keys.
 - Two pads on one frame (hdslaveOS sends a block's MIDI on its first frame) play the louder, whole; on a tie the later.
   A pad on a step's own frame is such a pair too. A pad pressed again plays again; a note-off changes nothing: each hit
   rings out, as a step does.
@@ -310,8 +330,12 @@ Quantize, Chance 0 and the routes on, and by the pitch heard, also while the hos
 next step's pitch its own; a pad on Play's frame, softer, tied or louder; two pads on one frame, either order and tied;
 on/on/off of one pad; MIDI note-ons, velocity 0 and a silence storm with nothing sounding; with Run off, Notes: Pitch
 playing keys chromatically by the pitch heard (pad 1's note 36 at the knobs, a key a semitone, not snapped by Quantize,
-the ±5 octaves of a step's Pitch), and to the bit as a step of their own through every route, two keys on one frame,
-Trigger and Advance afterwards; Notes: Steps and Pad Kit with Run off; the page's Push with Run off; the same output in
+the ±5 octaves of a step's Pitch; keys 52, 68 and 84 at their own pitch), and to the bit as a step of their own
+through every route, two keys on one frame,
+Trigger and Advance afterwards; the pad banks with Run on (keys 52, 68, 84, 60, 20 and others: the bank-A pad's
+step by the pitch heard, an octave a bank, bank D three, with Quantize Off and Octaves, at the same level; keys past
+the banks to the bit as the last bank's; the octave gone with the next Trigger or Advance); the drum map in the binary (one, 16 pads on notes 36–51,
+named); Notes: Steps and Pad Kit with Run off; the page's Push with Run off; the same output in
 blocks of 1, 37, 128 and 4096 frames); a choke stopping the key's hit (and not another key's, nor the sequencer's: key
 −1 and All Sound Off stop that), All Sound Off on any channel, Reset All Controllers and All Notes Off changing
 nothing, the Ratchet hits after a choke gone, a choke and a hit on one frame in event order, a hit inside the fade
