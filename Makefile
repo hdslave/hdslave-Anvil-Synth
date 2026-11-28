@@ -19,7 +19,7 @@ LDFLAGS := -shared -s -static-libgcc -static-libstdc++ -Wl,--gc-sections -Wl,-z,
 SOURCES := src/anvil.cpp
 HEADERS := $(wildcard src/*.h src/ui/*.h)
 
-.PHONY: all test bench clean fingerprint-update sanitize sp16
+.PHONY: all test bench clean fingerprint-update sanitize sp16 sp16-test
 all: $(OUT)/Anvil.clap
 
 $(OUT)/Anvil.clap: $(SOURCES) $(HEADERS) src/exports.map Makefile
@@ -80,3 +80,14 @@ sp16: $(OUT)/Anvil-sp16.clap
 $(OUT)/Anvil-sp16.clap: $(SOURCES) $(HEADERS) src/exports.map Makefile
 	@mkdir -p $(OUT)
 	$(SP16_CXX) $(SP16_CXXFLAGS) $(SOURCES) $(LDFLAGS) -o $@
+
+# The host tests on the device object, under qemu-arm as a Cortex-A9 with the toolchain's glibc 2.13 sysroot, also in
+# sp16-toolchain:gcc11-egl. The test program links libstdc++ statically: the sysroot's is older than GCC 11's.
+# Pictures go to build/sp16/.
+$(OUT)/sp16/host: tests/host.cpp tests/wav.h tests/png.h src/melodee_screen.h src/sixteen_screen.h Makefile
+	@mkdir -p $(OUT)/sp16
+	$(SP16_CXX) -std=c++17 -O2 $(WARN) -Wno-psabi -Ithird_party/clap/include tests/host.cpp -static-libstdc++ -static-libgcc -ldl -o $@
+
+sp16-test: $(OUT)/Anvil-sp16.clap $(OUT)/sp16/host
+	sp16-check-glibc $(OUT)/Anvil-sp16.clap
+	qemu-arm -cpu cortex-a9 -L /opt/sp16/sysroot $(OUT)/sp16/host $(OUT)/Anvil-sp16.clap $(OUT)/sp16

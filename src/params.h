@@ -10,7 +10,7 @@
 #include <strings.h>
 
 #ifndef ANVIL_VERSION
-#define ANVIL_VERSION "0.7.0"
+#define ANVIL_VERSION "0.7.1"
 #endif
 
 namespace anvil
