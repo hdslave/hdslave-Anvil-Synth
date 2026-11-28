@@ -20,6 +20,7 @@
 #include <dlfcn.h>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <map>
 #include <random>
 #include <string>
@@ -818,7 +819,7 @@ Played played (const std::vector<float>& l, const std::vector<double>& expect, d
         if (h >= end)
             break;
         ++p.hits;
-        long nearest = 1L << 40;
+        long nearest = std::numeric_limits<long>::max ();
         for (double x : expect)
             nearest = std::min (nearest, std::labs (h - (long) std::llround (x)));
         p.worst = std::max (p.worst, nearest);
