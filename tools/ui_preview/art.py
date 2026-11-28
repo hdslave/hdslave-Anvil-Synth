@@ -1,5 +1,5 @@
 """Reduce the original chrome masthead to native pixels and a fixed RGB565 palette."""
-from math import floor, ceil, cos, hypot, sin
+from math import floor, ceil, cos, hypot, log1p, sin
 from pathlib import Path
 from PIL import Image, ImageFont, ImageDraw
 
@@ -78,6 +78,11 @@ stations = [
     (247, 39.1, 49.7), (258, 35.5, 46.7), (267, 33.2, 44.9), (275, 32.7, 44.6),
     (284, 33.6, 46.1), (294, 36.5, 48.8), (303, 38.7, 50.5), (311, 39.1, 50.4),
     (320, 37.3, 48.2),
+    # The SP-16 cloth passes behind the tabs. Its broader folds surface in
+    # the open space above and below the controls as it travels to the edge.
+    (329, 35.5, 46.0), (363, 22, 32), (410, 8, 17), (447, 13, 23),
+    (491, 35, 47), (532, 45, 54), (576, 34, 44), (624, 12, 22),
+    (660, 7, 15), (703, 20, 31), (745, 38, 49),
 ]
 
 
@@ -128,8 +133,9 @@ def wave_gain(x):
 
 columns = []
 # The print starts at screen x=1. Carry the continuous material coordinates
-# through the aperture and off the rightmost pixel of the 320-pixel panel.
-for x in range(320 - 1):
+# through the aperture and across the full SP-16 header.
+sp16_width = stations[-1][0]
+for x in range(sp16_width - 1):
     if x < 200:
         ys = [y for y in range(im.height) if ribbon.getpixel((x,y))]
         if not ys:
@@ -142,15 +148,29 @@ for x in range(320 - 1):
     # A cross-seam spans a whole cell. Use its neighbourhood to turn the
     # seam smoothly across a broad fold, including its pinned ends.
     radius = max(2, round((bottom-top)/rows))
-    left,right = max(0,x-radius), min(len(centres)-1,x+radius)
+    left,right = max(0,x-radius), min(320 if x < 319 else sp16_width, x+radius)
     slope = (centres[right]-centres[left]) / (right-left)
     gain = wave_gain(x)
     gain_slope = (wave_gain(right)-wave_gain(left)) / (right-left)
     if x >= 200:
         visible_top, visible_end = floor(top), ceil(bottom)+1
+    # The checker repeats every two cells. Keep the long tail's coordinate in int16.
+    u256 = round(distance[x]*256)
+    if x >= 319:
+        u256 %= 512
     fields = (visible_top, visible_end, round(255*gain), round(top*16), round(bottom*16),
-              round(distance[x]*256), round(slope*128), round(du*256), round(gain_slope*1024))
+              u256, round(slope*128), round(du*256), round(gain_slope*1024))
     columns.append('{' + ','.join(map(str,fields)) + '}')
+# Extend the incoming fold beyond the old crop. Use its edge tangents and
+# weave pitch so both the checker and its motion continue across the join.
+sp16_inset = 12
+lead_columns = []
+for x in range(-sp16_inset-1, 0):
+    top = tops[0] + x*(tops[1]-tops[0])
+    bottom = bottoms[0] + x*(bottoms[1]-bottoms[0])
+    fields = (floor(top), ceil(bottom)+1, 255, round(top*16), round(bottom*16),
+              round(x*distance[1]*256), round((centres[1]-centres[0])*128), round(distance[1]*256), 0)
+    lead_columns.append('{' + ','.join(map(str, fields)) + '}')
 cover = []
 for y in range(im.height):
     row = [sum(front.getpixel((x+b,y)) << b for b in range(8) if x+b < im.width)
@@ -162,11 +182,17 @@ def unit(value):
     return min(1, max(0, value))
 
 
-def contour_coverage(x, y):
+def contour_coverage(x, y, sp16):
     # The bands across the lettering curl into an elliptical fingerprint.
     bend = y + 3.6*sin(x*.072 + y*.028) + 7.5*sin(x*.034 - .6 + y*.039) + 3.5*sin(x*.109 - y*.045)
     band = bend*.110 + x*.024 + sin(x*.027 + y*.029)
     dx, dy = x-202, y-30
+    if sp16 and x > 228:
+        # Space the outer arcs progressively farther apart and soften the
+        # small ripples as they fan out behind the controls.
+        beyond = x-228
+        dx += 74*log1p(beyond/74) - beyond
+        dy -= 8*ease(beyond/120)*sin(beyond*.014)
     radius = hypot(.82*dx - .48*dy, 1.30*(.45*dx + 1.03*dy))
     ring = (radius + 2.6*sin(dx*.081 + dy*.073) + 1.3*sin(dy*.15 - dx*.026))*.141
 
@@ -174,22 +200,30 @@ def contour_coverage(x, y):
         return unit((.18 - abs(f-round(f)))*6.4)
 
     strata = line(band) * unit(1.3 + .9*cos(x*.036 + y*.055))
-    rings = line(ring) * unit((radius-25)/14) * unit((83-radius)/22)
+    outer = unit((83-radius)/22)
+    # Only the MPC overlays status text here. On the SP-16 the outer rings
+    # continue behind the outgoing ribbon to the right edge of the title.
+    if sp16:
+        outer = max(outer, .82*ease((x-218)/36))
+    rings = line(ring) * unit((radius-25)/14) * outer
     blend = ease((x-133)/30)
-    readout = 1 - unit((x-228)/14) * (1 - unit((y-30)/10))
+    readout = 1 if sp16 else 1 - unit((x-228)/14) * (1 - unit((y-30)/10))
     return ((1-blend)*strata + blend*rings) * readout * unit((59-y)/4)
 
 
-def contour_ink(x, y):
+def contour_ink(x, y, sp16):
     samples = ((-.27,-.27), (.27,-.27), (-.27,.27), (.27,.27))
-    return round(3 * sum(contour_coverage(x+dx, y+dy) for dx,dy in samples) / len(samples))
+    return round(3 * sum(contour_coverage(x+dx, y+dy, sp16) for dx,dy in samples) / len(samples))
 
 
-# The extra plate margin lets the sampler drift past every screen edge.
-contours = []
-for y in range(-3,62):
-    groups = [sum(contour_ink(x+i,y) << (2*i) for i in range(4)) for x in range(-4,324,4)]
-    contours.append('{' + ','.join(f'0x{value:02x}' for value in groups) + '}')
+def contour_plate(origin, width, sp16=False):
+    # Keep the sampling margin for the full drift on both sides of each plate.
+    rows = []
+    for y in range(-3,62):
+        groups = [sum(contour_ink(x+i,y,sp16) << (2*i) for i in range(4)) for x in range(origin-4,width+4,4)]
+        rows.append('{' + ','.join(f'0x{value:02x}' for value in groups) + '}')
+    return ',\n'.join(rows)
+
 
 def colour_ramp(name, stops):
     colours = []
@@ -210,12 +244,20 @@ lines = ['// Generated from assets/art/anvil-masthead.png by tools/ui_preview/ar
                               (76,inks[8]), (92,inks[4]), (111,inks[3])]),
          colour_ramp('fabric', [(0,inks[9]), (36,inks[10]), (94,inks[8]), (153,inks[10]),
                                 (185,inks[9]), (223,inks[10]), (266,inks[8]), (319,inks[10])]),
-         'inline constexpr uint8_t contours[][82] = {', ',\n'.join(contours), '};',
+         'inline constexpr uint8_t contours[][82] = {', contour_plate(0, 320), '};',
+         f'inline constexpr int sp16TitleInset = {sp16_inset};',
+         f'inline constexpr uint8_t sp16ContourLead[][{ceil((sp16_inset+1+8)/4)}] = {{',
+         contour_plate(-sp16_inset, 1), '};',
+         'inline constexpr int sp16TailOrigin = 160;',
+         f'inline constexpr int sp16ArtWidth = {sp16_width};',
+         f'inline constexpr uint8_t sp16ContourTail[][{ceil((sp16_width-160+8)/4)}] = {{',
+         contour_plate(160, sp16_width, sp16=True), '};',
          'inline constexpr uint8_t masthead[][119] = {', ',\n'.join(words), '};',
          'inline constexpr uint8_t torusCover[][10] = {', ',\n'.join(cover), '};',
          f'inline constexpr int checkerRows = {rows};',
          'struct RibbonSpan { uint8_t top, end, gain; int16_t edgeTop16, edgeBottom16, u256, slope128; uint8_t du256; int8_t gainSlope1024; };', 'inline constexpr RibbonSpan ribbon[] = {',
-         ',\n'.join(','.join(columns[x:x+12]) for x in range(0, len(columns), 12)), '};','}']
+         ',\n'.join(','.join(columns[x:x+12]) for x in range(0, len(columns), 12)), '};',
+         'inline constexpr RibbonSpan sp16RibbonLead[] = {' + ','.join(lead_columns) + '};','}']
 (root/'src/ui/identity.h').write_text('\n'.join(lines)+'\n')
 
 face = ImageFont.truetype(str(root/'assets/fonts/DepartureMono-Regular.otf'),11)

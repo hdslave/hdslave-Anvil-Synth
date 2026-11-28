@@ -2704,14 +2704,52 @@ void testSixteenScreen (const std::string& folder)
                          SIXTEEN_SCREEN_HEIGHT, SIXTEEN_SCREEN_WIDTH, 1));
     };
     shot ("steps");
-    int varied = 0;
-    for (int y = 0; y < 60; ++y)
-        for (int x = 0; x < 320; ++x)
-            varied += pixels[(size_t) y * SIXTEEN_SCREEN_WIDTH + (size_t) x] != pixels[0];
-    CHECK (varied > 200);
+    const auto opening = pixels;
+    surf.now_ms += 40;
+    CHECK (ext->render (a.plugin, &surf, false));
+    bool rightMoves = false, bottomMoves = false, bodyMoves = false;
+    for (int y = 0; y < surf.height; ++y)
+        for (int x = 0; x < surf.width; ++x)
+        {
+            const int pos = y * surf.stride + x;
+            if (pixels[pos] == opening[pos]) continue;
+            if (y >= 76) bodyMoves = true;
+            else if (x == surf.width - 1) rightMoves = true;
+            else if (y >= 74) bottomMoves = true;
+        }
+    CHECK (rightMoves && bottomMoves);
+    CHECK (! bodyMoves);
+    // The cloth travels underneath the six buttons. Their labels and fills stay opaque.
+    for (int tabIndex = 0; tabIndex < 6; ++tabIndex)
+    {
+        bool stable = true;
+        for (int y = 30; y < 68; ++y)
+        {
+            const int left = y * surf.stride + 344 + tabIndex * 72 + 6;
+            stable &= std::equal (opening.begin() + left, opening.begin() + left + 56, pixels.begin() + left);
+        }
+        CHECK (stable);
+    }
+    CHECK (! ext->render (a.plugin, &surf, false));
 
+    surf.now_ms += 5000; // Leave the transport stopped and the screen untouched.
+    CHECK (ext->render (a.plugin, &surf, false));
+    surf.now_ms += 40;
+    CHECK (ext->render (a.plugin, &surf, false));
+    const auto beforeTab = pixels;
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 450, 40)); // VCO
+    CHECK (ext->render (a.plugin, &surf, false));
+    for (int y = 0; y < 76; ++y)
+    {
+        const int row = y * surf.stride;
+        CHECK (std::equal (beforeTab.begin() + row, beforeTab.begin() + row + 335, pixels.begin() + row));
+    }
+    surf.now_ms += 40;
+    CHECK (ext->render (a.plugin, &surf, false));
     bank ();
+    const auto partial = pixels;
+    CHECK (ext->render (a.plugin, &surf, true));
+    CHECK (partial == pixels);
     CHECK (std::strcmp (tab, "ANVIL - VCO 1/2") == 0);
     CHECK (ids[0] == a.id ("VCO 1 Freq") && ids[2] == a.id ("VCO 1 Wave") && ids[3] == a.id ("VCO 2 Freq") && ids[5] == a.id ("VCO 2 Wave"));
     shot ("vco");
@@ -2730,9 +2768,9 @@ void testSixteenScreen (const std::string& folder)
     bank ();
     CHECK (std::strcmp (tab, "ANVIL - VCF") == 0 && ids[0] == a.id ("Cutoff") && ids[5] == a.id ("Noise/VCF Mod"));
     shot ("vcf");
-    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 666, 40)); // VCA / PATCH
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 666, 40)); // VCA
     bank ();
-    CHECK (std::strcmp (tab, "ANVIL - VCA/PATCH") == 0 && ids[0] == a.id ("VCA EG") && ids[2] == a.id ("Volume") && ids[5] == a.id ("VCF EG > VCO 2"));
+    CHECK (std::strcmp (tab, "ANVIL - VCA") == 0 && ids[0] == a.id ("VCA EG") && ids[2] == a.id ("Volume") && ids[5] == a.id ("VCF EG > VCO 2"));
     shot ("vca");
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 738, 40)); // SEQ
     bank ();
@@ -2744,12 +2782,106 @@ void testSixteenScreen (const std::string& folder)
     shot ("seq-notes");
 
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 378, 40)); // back to STEPS
+    // Both encoder group labels sit below the editable velocity lanes.
+    CHECK (! ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 111, 276));
+    CHECK (! ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 280, 276));
     const int before = processRequests;
     CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 111, 120)); // step 1 pitch, above the centre line
     double pitched = 0;
     CHECK (a.params->get_value (a.plugin, a.id ("Pitch 1"), &pitched) && pitched > 0.4);
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_MOVE, 111, 159)); // Pitch lane centre.
+    CHECK (a.params->get_value (a.plugin, a.id ("Pitch 1"), &pitched) && pitched == 0.0);
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_UP, 111, 159));
+    double velocity = 0;
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_DOWN, 111, 221));
+    CHECK (a.params->get_value (a.plugin, a.id ("Velocity 1"), &velocity) && velocity == 1.0);
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_MOVE, 111, 254));
+    CHECK (a.params->get_value (a.plugin, a.id ("Velocity 1"), &velocity) && velocity == 0.0);
+    CHECK (ext->touch (a.plugin, SIXTEEN_TOUCH_UP, 111, 254));
     CHECK (ext->selector_push (a.plugin));
     CHECK (processRequests > before);
+
+    // The widening contours remain visible from the ring to the first tab as the plate drifts.
+    for (int quarter = 0; quarter < 4; ++quarter)
+    {
+        surf.now_ms += 3200;
+        CHECK (ext->render (a.plugin, &surf, false));
+        for (int left = 252; left < 332; left += 20)
+        {
+            int darkest = 255, lightest = 0;
+            for (int y = 3; y < 29; ++y)
+                for (int x = left; x < left + 20; ++x)
+                {
+                    const int blue = pixels[y * surf.stride + x] & 255;
+                    darkest = std::min (darkest, blue);
+                    lightest = std::max (lightest, blue);
+                }
+            CHECK (lightest - darkest > 12);
+        }
+    }
+}
+
+void testSixteenParameterDrags ()
+{
+    Instance a;
+    const auto* ext = static_cast<const sixteen_plugin_screen_t*> (a.plugin->get_extension (a.plugin, SIXTEEN_EXT_SCREEN));
+    CHECK (ext != nullptr);
+    if (! ext) return;
+    auto touch = [&](int phase, int x, int y) { return ext->touch (a.plugin, phase, x, y); };
+    auto read = [&](clap_id id) {
+        double result = 0;
+        CHECK (a.params->get_value (a.plugin, id, &result));
+        return result;
+    };
+    uint32_t ids[6];
+    char title[SIXTEEN_TAB_NAME_SIZE];
+    // The 6/5/3-column banks, the 3x2 filter/amplifier and the 2x2 mixer each have different cell widths.
+    struct Page { int tabX, count, columns, y; };
+    const Page pages[] = {{450, 6, 6, 139}, {450, 5, 5, 239}, {522, 4, 2, 145},
+                          {594, 6, 3, 145}, {666, 6, 3, 145}, {738, 6, 6, 139}, {738, 3, 3, 239}};
+    for (const auto& page : pages)
+    {
+        CHECK (touch (SIXTEEN_TOUCH_DOWN, page.tabX, 45));
+        for (int i = 0; i < page.count; ++i)
+        {
+            const int x = 14 + (2 * (i % page.columns) + 1) * 536 / (2 * page.columns);
+            const int y = page.y + (i / page.columns) * 83;
+            CHECK (touch (SIXTEEN_TOUCH_DOWN, x, y));
+            CHECK (ext->knobs (a.plugin, ids, title));
+            CHECK (ids[i] != CLAP_INVALID_ID);
+            CHECK (touch (SIXTEEN_TOUCH_MOVE, 779, y));
+            const double high = read (ids[i]);
+            CHECK (touch (SIXTEEN_TOUCH_MOVE, 0, y));
+            CHECK (read (ids[i]) < high);
+            CHECK (touch (SIXTEEN_TOUCH_UP, 0, y));
+            CHECK (! touch (SIXTEEN_TOUCH_MOVE, x, y));
+        }
+    }
+
+    CHECK (touch (SIXTEEN_TOUCH_DOWN, 594, 45)); // VCF
+    a.setup ({{"Cutoff", 0.5}, {"Resonance", 0.25}});
+    const auto cutoff = a.id ("Cutoff"), resonance = a.id ("Resonance");
+    CHECK (touch (SIXTEEN_TOUCH_DOWN, 60, 150));
+    CHECK (touch (SIXTEEN_TOUCH_MOVE, 62, 148));
+    CHECK (read (cutoff) == 0.5); // Finger jitter on a tap.
+    CHECK (touch (SIXTEEN_TOUCH_MOVE, 60, 118));
+    CHECK (read (cutoff) == 0.75);
+    a.setup ({{"Cutoff", 0.25}}); // A host/encoder edit during the gesture becomes the new starting value.
+    CHECK (touch (SIXTEEN_TOUCH_UP, 250, 102));
+    CHECK (read (cutoff) == 0.375 && read (resonance) == 0.25);
+    CHECK (! touch (SIXTEEN_TOUCH_DOWN, 192, 150)); // Gap between Cutoff and Resonance.
+    CHECK (! touch (SIXTEEN_TOUCH_MOVE, 190, 130));
+
+    CHECK (touch (SIXTEEN_TOUCH_DOWN, 450, 45)); // Touch an inactive VCO bank and edit in one gesture.
+    touch (SIXTEEN_TOUCH_DOWN, 60, 92); // Select the oscillator bank by its heading.
+    CHECK (ext->knobs (a.plugin, ids, title) && ids[0] == a.id ("VCO 1 Freq"));
+    a.setup ({{"Hard Sync", 0}});
+    CHECK (touch (SIXTEEN_TOUCH_DOWN, 500, 240));
+    CHECK (ext->knobs (a.plugin, ids, title) && ids[4] == a.id ("Hard Sync"));
+    CHECK (touch (SIXTEEN_TOUCH_MOVE, 500, 233) && read (ids[4]) == 0);
+    CHECK (touch (SIXTEEN_TOUCH_MOVE, 500, 228) && read (ids[4]) == 1);
+    CHECK (touch (SIXTEEN_TOUCH_MOVE, 500, 0) && read (ids[4]) == 1);
+    CHECK (touch (SIXTEEN_TOUCH_UP, 500, 12) && read (ids[4]) == 0);
 }
 
 int main (int argc, char** argv)
@@ -2794,6 +2926,7 @@ int main (int argc, char** argv)
     testQuantize();
     testScreen (argv[2]);
     testSixteenScreen (argv[2]);
+    testSixteenParameterDrags ();
     testPads();
     testDrumMap (argv[1]);
     testChokes();
