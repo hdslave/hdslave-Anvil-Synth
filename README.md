@@ -9,9 +9,9 @@
     <th width="27%">SP-16 · freesp16</th>
   </tr>
   <tr>
-    <td align="center"><a href="docs/anvil-screen.gif"><img src="docs/anvil-screen.gif" alt="Anvil custom screen running in hdslaveOS"></a></td>
-    <td align="center"><a href="mac-clap/assets/desktop-preview.gif"><img src="mac-clap/assets/desktop-preview.gif" alt="Eight-step percussion sequence running in Anvil"></a></td>
-    <td align="center"><a href="#freesp16"><img src="docs/sp16/steps.png" alt="Anvil pitch and velocity steps on the SP-16"></a></td>
+    <td align="center"><a href="docs/anvil-screen.webp"><img src="docs/mpc-loop.webp" alt="Anvil custom screen running in hdslaveOS"></a></td>
+    <td align="center"><a href="mac-clap/assets/desktop-preview.webp"><img src="mac-clap/assets/desktop-preview.webp" alt="Eight-step percussion sequence running in Anvil"></a></td>
+    <td align="center"><a href="docs/sp16/steps.webp"><img src="docs/sp16-loop.webp" alt="Anvil pitch and velocity steps on the SP-16"></a></td>
   </tr>
 </table>
 
@@ -64,39 +64,18 @@ The download is `hdslave-Anvil-freesp16-0.7.1.zip` in [release 0.7.1](https://gi
 
 The object is ARMv7-A, softfp, glibc 2.13, and it needs only `libm` and `libc`. The host tests pass on it under qemu-arm (0.7.1: 709,698 checks, `make sp16-test`), and the MPC build's fingerprint did not move. 0.6.4 was loaded on a unit on 2026-11-23 and it worked. 0.7.1, with the refreshed editor and the engine of 0.6.5 to 0.7.0, has not been run on a unit yet.
 
-The following screens show the SP-16 editor in this checkout. The selected step is violet and the playing step is lime. On STEPS, **SEQ** marks the selected step’s pitch and velocity on knobs 1–2. **PATCH** marks cutoff, resonance, filter decay and amp decay on knobs 3–6 for the whole patch. Drag a parameter card up or right to increase its value, or down or left to decrease it. Touching a card on VCO or SEQ also selects its encoder bank. The six hardware knobs can continue the edit from the displayed values.
+The SP-16 editor marks the selected step in violet and the playing step in lime. On STEPS, **SEQ** marks the selected step’s pitch and velocity on knobs 1–2. **PATCH** marks cutoff, resonance, filter decay and amp decay on knobs 3–6 for the whole patch. Drag a parameter card up or right to increase its value, or down or left to decrease it. Touching a card on VCO or SEQ also selects its encoder bank. The six hardware knobs can continue the edit from the displayed values.
 
-**STEPS**
+Open a bank recording to see its controls during playback.
 
-![Anvil STEPS page, eight steps with pitch and velocity](docs/sp16/steps.png)
-
-**VCO, the two oscillators**
-
-![Anvil VCO page, both oscillators](docs/sp16/vco.png)
-
-**VCO, FM and sync**
-
-![Anvil VCO page, envelope, FM and hard sync](docs/sp16/vco-fm.png)
-
-**MIX**
-
-![Anvil mixer page](docs/sp16/mix.png)
-
-**VCF**
-
-![Anvil filter page](docs/sp16/vcf.png)
-
-**VCA and patch**
-
-![Anvil VCA and patch page](docs/sp16/vca.png)
-
-**Sequencer**
-
-![Anvil sequencer page, clock and groove](docs/sp16/seq.png)
-
-**Sequencer, notes**
-
-![Anvil sequencer page, quantize, notes and run](docs/sp16/seq-notes.png)
+| Bank | SP-16 panel |
+| --- | --- |
+| STEPS | [Edit step pitch and velocity](docs/sp16/steps.webp) |
+| VCO | [Oscillators](docs/sp16/vco.webp) · [FM and hard sync](docs/sp16/vco-fm.webp) |
+| MIX | [Signal levels](docs/sp16/mix.webp) |
+| VCF | [Filter controls](docs/sp16/vcf.webp) |
+| VCA | [Amplifier and patch controls](docs/sp16/vca.webp) |
+| SEQ | [Clock and groove](docs/sp16/seq.webp) · [Scale, notes and run](docs/sp16/seq-notes.webp) |
 
 ## Controls
 
