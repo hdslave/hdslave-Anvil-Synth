@@ -45,3 +45,7 @@ Read `../AGENTS.md`, then `../Workflow/plugins.md` and `../Workflow/host-facts.m
 - The fingerprint's random scenarios draw values for fixed parameter lists (`order01`, `order02`…). Add a new list when adding parameters, so the old hashes hold.
 - The clock code (song-anchored steps, a late loop wrap, Run with Play, Chance and Ratchet) has a test for each case in `tests/host.cpp`. Keep them passing.
 - Pads (MIDI notes): with Run on every note plays the step its key names (36-43 steps 1-8, every 8 notes again) without moving the sequence, stopped or playing; with Run off Notes decides (Pitch, index 0, once called Trigger: the key chromatically from note 36 = the Freq knobs, clamped to a step's ±5 octaves; Steps: as Run on). A choke, or MIDI's All Sound Off (CC 120 at 0), fades the hit sounding out in 1.5 ms (its key's, or key -1's / All Sound Off anything) and drops its Ratchet hits; the fade is on the output, not in the envelopes' per-sample loop, which must stay as it is (0.6.0's 81,827 a block). Note-offs, CC 121 and CC 123 change nothing. `testPads` and `testChokes` in `tests/host.cpp` hold it.
+
+## Release packaging
+
+Every release ZIP includes the full repository `LICENSE.txt` beside the third-party notices, outside signed plug-in bundles. Preserve both when packaging the plug-in for another project.
