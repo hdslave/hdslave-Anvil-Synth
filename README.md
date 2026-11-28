@@ -17,7 +17,7 @@
 
 > **Desktop CLAP version (macOS & Windows):** A separate desktop CLAP build with all MPC screens on one interactive panel lives in [**`mac-clap/`**](mac-clap/) (`cd mac-clap && ./install-macos.sh`). The SP-16 build is [below](#freesp16).
 
-Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.7.1). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
+Built for the Akai MPC Sample running [Melodee](https://github.com/keremimo/melodee-sample) / [hdslaveOS](https://github.com/hdslave/hdslaveOS) (64-bit ARM Linux, Cortex-A55). Hosts list it as **hdslave Anvil** (id `com.hdslave.anvil`, version 0.8.0). It follows the front panel and normalled signal flow of the Moog DFAM and the Behringer Edge — dual VCOs with linear FM, hard sync, white/pink noise, overdriving mixer, and a 4-pole LP/HP ladder filter — without the patch bay, plus one new modulation control: **VCO EG > FM 1-2 Amt**.
 
 The custom screen uses `melodee.screen/1` on Melodee 0.7 and hdslaveOS based on it. Open Edit on the plug-in track or select PANEL on Stage.
 
@@ -59,6 +59,10 @@ stayed open or was closed, and none survives a deactivation. The sound is again 
 
 0.7.1 brings the refreshed SP-16 editor onto 0.7.0's engine, so one version runs on both instruments. On the MPC
 the page and the sound are unchanged (every fingerprint hash holds, and the cost is 0.7.0's to the instruction).
+
+0.8.0 adds fifteen factory presets that show off the FM after the ten there were, nine of them with the steps on
+VCO 2 alone (see [Presets](#presets)). The engine is untouched: every earlier fingerprint hash holds and the cost is
+0.7.1's to the instruction. The new presets have not been heard on the MPC.
 
 ## freesp16
 
@@ -187,8 +191,16 @@ Negative, with 1-2 FM Amt up: the hit starts clean and the FM grows as the envel
 
 ## Presets
 
-Ten factory presets, inside the plug-in: Melodee lists them on the plug-in's PRESETS page (any host with CLAP preset
-discovery does). A preset sets every control, Clock Div and the eight steps too; Default puts everything back.
+Twenty-five factory presets, inside the plug-in: Melodee lists them on the plug-in's PRESETS page (any host with
+CLAP preset discovery does). A preset sets every control, Clock Div and the eight steps too; Default puts everything
+back.
+
+The fifteen added in 0.8.0, after the first ten, show off the 1-2 FM. VCO 1's triangle modulates VCO 2's frequency, so VCO 2's pitch
+against VCO 1's is the FM ratio and VCO 2's level is how much of it you hear. With **Seq Pitch Mod on VCO 2** the
+steps move VCO 2 alone: the note stays where VCO 1 is and every step is a new ratio, a new timbre. The growls add what
+moves inside a hit: **VCO EG > FM 1-2 Amt** below zero lets the FM grow as the VCO EG falls, **VCF EG > VCO 2** bends
+the ratio, and each step's velocity sets how far all of it goes. Growl Morph, Sync Snarl, Gut Wobble, Stutter Growl,
+Churn Bass, Rust Scream, Ratio Steps, Tidal Morph and Metal Hats play that way.
 
 | Preset | What it is |
 |---|---|
@@ -202,9 +214,26 @@ discovery does). A preset sets every control, Clock Div and the eight steps too;
 | Random Zap | Laser zaps in a Random order: VCO 2 swept down, FM riding the VCO EG, VCF EG > VCO 2, steps a fifth or an octave apart (Quantize Fifths), some left out (Chance) |
 | Ping-Pong Toms | Six toms down a minor scale and back up (Ping-Pong, Length 6, Quantize Minor), swung |
 | Pad Kit | Eight drums on pads 1–8 (notes 36–43, and again on pads 9–16), low to high, the higher brighter (Pitch > Cutoff); with the transport running it plays them as a pattern too. Run: Stop for the pads alone: its Notes: Steps keeps the eight drums on the pads |
+| Growl Morph | The steps move VCO 2 alone (Seq Pitch Mod: VCO 2), so the bass note holds on VCO 1 while each step sets a new FM ratio; inside each hit the FM grows (VCO EG > FM negative), VCO 2 rises (VCF EG > VCO 2 negative) and the filter opens (VCF EG negative), with noise roughing the cutoff |
+| Sync Snarl | VCO 2 hard-synced to VCO 1 with the steps on VCO 2 alone: the pitch stays, each step moves the formant, and the VCO and VCF EGs sweep it down inside the hit; FM from VCO 1 on top |
+| Gut Wobble | A slow growl in eighths: each step VCO 2 alone a fifth or an octave away (Quantize Fifths), the FM blooming as the VCO EG falls, VCO 2 rising, the slow VCA swelling under a closing filter |
+| Stutter Growl | Every eighth three times (Ratchet 3), a new FM ratio each step (VCO 2 alone), each stutter sweeping VCO 2 down, the FM near its harshest, Chance dropping a step now and then |
+| Churn Bass | Quarter notes on a held bass: VCO 2 a hair off VCO 1, each step putting it a little further off (VCO 2 alone, unquantized), so the FM sidebands churn at a different speed every beat |
+| Rust Scream | A screaming lead: VCO 2 three times VCO 1 and deeply modulated, rising into each note (VCF EG > VCO 2 negative) through a resonant filter, the steps on VCO 2 alone in a minor key, in a random order |
+| Ratio Steps | FM laid bare: VCO 1 modulates VCO 2, both triangles, and the steps walk VCO 2 alone up and down the ratios 1, 1.5, 2, 3, 4 (Quantize Fifths): the note holds while the tone steps; each hit brightest on the attack |
+| FM Pluck Bass | A bassline in a minor key: the two VCOs in unison (the steps on both), VCO 2 modulated hard on the attack and settling, VCO 1 under it as a sub, swung |
+| Tidal Morph | A drone in half notes: VCO 1 holds, each step sets VCO 2 (alone, unquantized) to a new ratio, and over each long note the FM grows while the slow VCA and filter swell and fall |
+| Glass Bells | Bells in a minor pentatonic: VCO 2 the note, VCO 1 below it at an unrelated ratio (1 : 1.41) so the partials ring inharmonic, the FM deep on the strike and fading (the steps move both VCOs, keeping the ratio) |
+| FM Kick | Four on the floor with a pickup: VCO 2 a triangle swept down from about 600 Hz, VCO 1 below it modulating it on the attack only (a knock that is gone with the sweep); the steps leave the pitch alone (Seq Pitch Mod Off) |
+| FM Clang | A snare from metal: VCO 2 modulated at an inharmonic ratio, a short drop in pitch, noise for the snap (and roughing the cutoff), on the backbeat with ghost notes |
+| FM Toms | Six toms down a minor scale and back up (Ping-Pong, Length 6), VCO 2 a fifth over VCO 1 and modulated by it on the strike, both swept down a little, swung |
+| Metal Hats | Hi-hats from FM alone: two high square VCOs at an inharmonic ratio, the FM at full depth, a little noise, through the high pass; each step tints VCO 2 a little (VCO 2 alone), accents on the beat |
+| FM Pad Kit | Eight FM drums on pads 1-8 (Notes: Steps; again on pads 9-16), from a kick up to metal, the higher the brighter (Pitch > Cutoff), each struck with an FM knock; with the transport running it plays them as a pattern too (Run: Stop for the pads alone) |
 
 They are the patches the demo renders play: the tests load each preset and check it gives the same values and the
-same samples as the demo's list.
+same samples as the demo's list. The 0.8.0 presets' levels were set by measurement (BS.1770 loudness of the 8-second
+demos: about −24 to −28 LUFS, Metal Hats −30); nobody has listened to them yet. The list only grows: the first ten
+are as they were, and a released preset's key always loads the same preset.
 
 ## The screen
 
@@ -354,7 +383,7 @@ peak, to the bit; a first block that already plays (at the song's top, mid-step,
 that waited a stopped block, to the bit, and Run switched on on a step's frame playing it once; VCO pitch, step pitch on each Seq Pitch
 Mod setting; the new FM control both ways; and finite, bounded output at 60 random and extreme settings.
 
-`tests/fingerprint.cpp` then renders 63 fixed scenarios (each preset, the bench's patches, 24 random patches with the
+`tests/fingerprint.cpp` then renders 78 fixed scenarios (each preset, the bench's patches, 24 random patches with the
 buttons, MIDI and knobs moving, other block sizes and rates, stop and jumps, Length and Swing, each Direction with
 Chance and Ratchet, the patch routings, notes playing steps, a loop wrapping inside a block in whole blocks and in
 parts, the pads playing steps with the transport stopped and playing, keys with Run off) and hashes every output

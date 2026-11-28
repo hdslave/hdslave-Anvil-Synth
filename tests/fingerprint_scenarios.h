@@ -165,6 +165,15 @@ std::vector<Scenario> scenarios()
     for (int i = 0; i < 20; ++i)
         keys.events.push_back ({ (uint64_t) (1000 + i * 9000), Event::noteOn, "", (double) (36 + (i * 5) % 37) });
     list.push_back (keys);
+    // 0.8.0: the FM set, listed after the presets above.
+    for (const char* key : { "growl-morph", "sync-snarl", "gut-wobble", "stutter-growl", "churn-bass", "rust-scream", "ratio-steps",
+                             "fm-pluck-bass", "tidal-morph", "glass-bells", "fm-kick", "fm-clang", "fm-toms", "metal-hats", "fm-pad-kit" })
+    {
+        Scenario s;
+        s.name = std::string ("preset-") + key;
+        s.preset = key;
+        list.push_back (s);
+    }
     return list;
 }
 } // namespace

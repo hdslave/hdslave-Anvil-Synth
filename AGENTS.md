@@ -41,6 +41,7 @@ Read `../AGENTS.md`, then `../Workflow/plugins.md` and `../Workflow/host-facts.m
 ## This plug-in
 
 - `src/params.h` holds the version and the parameter table, `src/engine.h` the DSP and sequencer, `src/presets.h` the factory presets. The page is `src/screen.h` plus `src/ui/`.
+- Presets: `presetTable` is the list hosts show, in order, and it only grows: Default and the ten of 0.2-0.7, then the fifteen FM presets of 0.8.0. Never remove a released preset, change its values or reuse its key. A new preset goes at the end, gets a `preset-<key>` fingerprint scenario, and joins the demo list in `tests/host.cpp` (it checks the values and writes `build/demo-<key>.wav`).
 - `src/ui/page.h` is Anvil's own (its own `ink::` palette, `identity.h` included): it is not shared with any sibling, and must not be overwritten from one.
 - The fingerprint's random scenarios draw values for fixed parameter lists (`order01`, `order02`…). Add a new list when adding parameters, so the old hashes hold.
 - The clock code (song-anchored steps, a late loop wrap, Run with Play, Chance and Ratchet) has a test for each case in `tests/host.cpp`. Keep them passing.
